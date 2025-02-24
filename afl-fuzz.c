@@ -1013,6 +1013,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   }
 
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+  if (triggering_distance > -1 && triggering_distance < min_triggering_distance) ret += 3;
 
   return ret;
 
@@ -2664,10 +2665,12 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
     /* This is relevant when test cases are added w/out save_if_interesting */
 
+    u8 hnb_t = 217;
+
     if (q->distance <= 0) {
 
       /* This calculates cur_distance */
-      has_new_bits(virgin_bits);
+      hnb_t = has_new_bits(virgin_bits);
 
       q->distance = cur_distance;
       if (cur_distance > 0) {
@@ -2684,8 +2687,10 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
     }
 
     if (q->exec_cksum != cksum) {
-
-      u8 hnb = has_new_bits(virgin_bits);
+      
+      u8 hnb = hnb_t;
+      if (hnb == 217)
+        hnb = has_new_bits(virgin_bits);
       if (hnb > new_bits) new_bits = hnb;
 
       if (q->exec_cksum) {
@@ -2742,7 +2747,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
 abort_calibration:
 
-  if (new_bits == 2 && !q->has_new_cov) {
+  if (new_bits % 3 == 2 && !q->has_new_cov) {
     q->has_new_cov = 1;
     queued_with_cov++;
   }
@@ -3150,7 +3155,8 @@ static u8* describe_op(u8 hnb) {
 
   }
 
-  if (hnb == 2) strcat(ret, ",+cov");
+  if (hnb % 3 == 2) strcat(ret, ",+cov");
+  if (hnb > 2) strcat(ret, ",+trig");
 
   return ret;
 
@@ -3241,7 +3247,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     add_to_queue(fn, len, 0);
 
-    if (hnb == 2) {
+    if (hnb % 3 == 2) {
       queue_top->has_new_cov = 1;
       queued_with_cov++;
     }
