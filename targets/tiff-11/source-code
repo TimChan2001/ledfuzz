@@ -1,0 +1,163 @@
+/*
+ * Print the contents of the current directory
+ * to the specified stdio file stream.
+ */
+void
+TIFFPrintDirectory(TIFF* tif, FILE* fd, long flags)
+{
+	TIFFDirectory *td = &tif->tif_dir;
+	char *sep;
+	long l, n;
+
+#if defined(__WIN32__) && (defined(_MSC_VER) || defined(__MINGW32__))
+	fprintf(fd, "TIFF Directory at offset 0x%I64x (%I64u)\n",
+		(unsigned __int64) tif->tif_diroff,
+		(unsigned __int64) tif->tif_diroff);
+#else
+	fprintf(fd, "TIFF Directory at offset 0x%llx (%llu)\n",
+		(unsigned long long) tif->tif_diroff,
+		(unsigned long long) tif->tif_diroff);
+#endif
+	if (TIFFFieldSet(tif,FIELD_SUBFILETYPE)) {
+		fprintf(fd, "  Subfile Type:");
+		sep = " ";
+		if (td->td_subfiletype & FILETYPE_REDUCEDIMAGE) {
+			fprintf(fd, "%sreduced-resolution image", sep);
+			sep = "/";
+		}
+		if (td->td_subfiletype & FILETYPE_PAGE) {
+			fprintf(fd, "%smulti-page document", sep);
+			sep = "/";
+		}
+		if (td->td_subfiletype & FILETYPE_MASK)
+			fprintf(fd, "%stransparency mask", sep);
+		fprintf(fd, " (%lu = 0x%lx)\n",
+		    (unsigned long) td->td_subfiletype, (long) td->td_subfiletype);
+	}
+
+	if (TIFFFieldSet(tif,FIELD_TRANSFERFUNCTION)) {
+		fprintf(fd, "  Transfer Function: ");
+		if (flags & TIFFPRINT_CURVES) {
+			fprintf(fd, "\n");
+			n = 1L<<td->td_bitspersample;
+			for (l = 0; l < n; l++) {
+				uint16 i;
+				fprintf(fd, "    %2ld: %5u",
+				    l, td->td_transferfunction[0][l]);
+				for (i = 1; i < td->td_samplesperpixel; i++){
+					fprintf(fd, " %5u",
+					    td->td_transferfunction[i][l]);
+                }
+				fputc('\n', fd);
+			}
+		} else
+			fprintf(fd, "(present)\n");
+	}
+
+	/*
+	** Custom tag support.
+	*/
+	{
+		int  i;
+		short count;
+
+		count = (short) TIFFGetTagListCount(tif);
+		for(i = 0; i < count; i++) {
+			uint32 tag = TIFFGetTagListEntry(tif, i);
+			const TIFFField *fip;
+			uint32 value_count;
+			int mem_alloc = 0;
+			void *raw_data;
+
+			fip = TIFFFieldWithTag(tif, tag);
+			if(fip == NULL)
+				continue;
+
+			if(fip->field_passcount) {
+				if (fip->field_readcount == TIFF_VARIABLE2 ) {
+					if(TIFFGetField(tif, tag, &value_count, &raw_data) != 1)
+						continue;
+				} else if (fip->field_readcount == TIFF_VARIABLE ) {
+					uint16 small_value_count;
+					if(TIFFGetField(tif, tag, &small_value_count, &raw_data) != 1)
+						continue;
+					value_count = small_value_count;
+				} else {
+					assert (fip->field_readcount == TIFF_VARIABLE
+						|| fip->field_readcount == TIFF_VARIABLE2);
+					continue;
+				} 
+			} else {
+				if (fip->field_readcount == TIFF_VARIABLE
+				    || fip->field_readcount == TIFF_VARIABLE2)
+					value_count = 1;
+				else if (fip->field_readcount == TIFF_SPP)
+					value_count = td->td_samplesperpixel;
+				else
+					value_count = fip->field_readcount;
+				if (fip->field_tag == TIFFTAG_DOTRANGE
+				    && strcmp(fip->field_name,"DotRange") == 0) {
+					/* TODO: This is an evil exception and should not have been
+					   handled this way ... likely best if we move it into
+					   the directory structure with an explicit field in 
+					   libtiff 4.1 and assign it a FIELD_ value */
+					static uint16 dotrange[2];
+					raw_data = dotrange;
+					TIFFGetField(tif, tag, dotrange+0, dotrange+1);
+				} else if (fip->field_type == TIFF_ASCII
+					   || fip->field_readcount == TIFF_VARIABLE
+					   || fip->field_readcount == TIFF_VARIABLE2
+					   || fip->field_readcount == TIFF_SPP
+					   || value_count > 1) {
+					if(TIFFGetField(tif, tag, &raw_data) != 1)
+						continue;
+				} else {
+					raw_data = _TIFFmalloc(
+					    _TIFFDataSize(fip->field_type)
+					    * value_count);
+					mem_alloc = 1;
+					if(TIFFGetField(tif, tag, raw_data) != 1) {
+						_TIFFfree(raw_data);
+						continue;
+					}
+				}
+			}
+
+			/*
+			 * Catch the tags which needs to be specially handled
+			 * and pretty print them. If tag not handled in
+			 * _TIFFPrettyPrintField() fall down and print it as
+			 * any other tag.
+			 */
+			if (!_TIFFPrettyPrintField(tif, fip, fd, tag, value_count, raw_data))
+				_TIFFPrintField(fd, fip, value_count, raw_data);
+
+			if(mem_alloc)
+				_TIFFfree(raw_data);
+		}
+	}
+        
+	if (tif->tif_tagmethods.printdir)
+		(*tif->tif_tagmethods.printdir)(tif, fd, flags);
+
+	if ((flags & TIFFPRINT_STRIPS) &&
+	    TIFFFieldSet(tif,FIELD_STRIPOFFSETS)) {
+		uint32 s;
+
+		fprintf(fd, "  %lu %s:\n",
+		    (unsigned long) td->td_nstrips,
+		    isTiled(tif) ? "Tiles" : "Strips");
+		for (s = 0; s < td->td_nstrips; s++)
+#if defined(__WIN32__) && (defined(_MSC_VER) || defined(__MINGW32__))
+			fprintf(fd, "    %3lu: [%8I64u, %8I64u]\n",
+			    (unsigned long) s,
+			    (unsigned __int64) TIFFGetStrileOffset(tif, s),
+			    (unsigned __int64) TIFFGetStrileByteCount(tif, s));
+#else
+			fprintf(fd, "    %3lu: [%8llu, %8llu]\n",
+			    (unsigned long) s,
+			    (unsigned long long) TIFFGetStrileOffset(tif, s),
+			    (unsigned long long) TIFFGetStrileByteCount(tif, s));
+#endif
+	}
+}
