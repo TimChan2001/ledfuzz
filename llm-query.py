@@ -2,6 +2,7 @@
 
 from openai import OpenAI
 import os
+import sys
 
 def read_file_content(file_path):
     if os.path.exists(file_path):
@@ -10,8 +11,15 @@ def read_file_content(file_path):
     else:
         print(f"Error: File '{file_path}' does not exist.")
         exit(1)
-    
-target_path = input("Enter the target path: ").strip()
+
+args =  sys.argv
+if len(args) != 3:
+    print("Usage:", args[0], " dir_path outfile_name\n")
+    sys.exit()
+
+# target_path = input("Enter the target path: ").strip()
+target_path = args[1]
+outfile_name = args[2]
 program_name = read_file_content(target_path+'/name').strip()
 bug_report = read_file_content(target_path+'/bug-report')
 source_code = read_file_content(target_path+'/source-code')
@@ -22,7 +30,7 @@ print(source_code)
 
 client = OpenAI(api_key="add your api key", base_url="https://api.deepseek.com")
 
-output_file = open(f'{target_path}/output.log','w')
+output_file = open(f'{target_path}/out/{outfile_name}','w')
 
 messages=[{"role": "system", "content": "You are an expert in software security"},{"role": "user", "content": f"What do you know about program '{program_name}', like its purpose and input format?"},]
 
