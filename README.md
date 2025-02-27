@@ -3,8 +3,7 @@ prototype for LEDFuzz
 
 ### llm-query usage
 ```
-python3 /home/yiyang/ledfuzz/llm-query.py
-> BugXXX/
+python3 /home/yiyang/ledfuzz/llm-query.py BugXXX/ outfile_name
 ```
 
 BugXXX/ should be as follows:
