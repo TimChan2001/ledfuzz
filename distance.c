@@ -23,7 +23,7 @@ void setup_shm() {
 void distance_instrument(int distance) {
     if (!trace_bits) {
         perror("Shm not set");
-        exit(1);
+        abort();
     }
     int *shm_distance = (int *)(trace_bits + MAP_SIZE + 16);
     *shm_distance = distance;
