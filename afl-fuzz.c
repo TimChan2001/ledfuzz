@@ -45,6 +45,7 @@
 #include <termios.h>
 #include <dlfcn.h>
 #include <sched.h>
+#include <float.h>
 
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -289,9 +290,9 @@ static double cur_distance = -1.0;     /* Distance of executed input       */
 static double max_distance = -1.0;     /* Maximal distance for any input   */
 static double min_distance = -1.0;     /* Minimal distance for any input   */
 
-static double triggering_distance = -1.0;      /* Distance to triggering         */
-static double max_triggering_distance = -1.0;  /* Maximal distance to triggering */
-static double min_triggering_distance = -1.0;  /* Minimal distance to triggering */
+static double triggering_distance = -DBL_MAX;      /* Distance to triggering         */
+static double max_triggering_distance = -DBL_MAX;  /* Maximal distance to triggering */
+static double min_triggering_distance = -DBL_MAX;  /* Minimal distance to triggering */
 static u8 reach_tag = 0;                           /* Reached or not                 */
 
 static u32 t_x = 10;                  /* Time to exploitation (Default: 10 min) */
@@ -820,9 +821,9 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   }
 
-  if (triggering_distance > 0) {
+  if (triggering_distance > -DBL_MAX) {
 
-    if (max_triggering_distance <= 0) {
+    if (max_triggering_distance == -DBL_MAX) {
       max_triggering_distance = triggering_distance;
       min_triggering_distance = triggering_distance;
     }
@@ -937,7 +938,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
   u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
-  u64* t_distance = (u64*) (trace_bits + MAP_SIZE + 16);
+  int* t_distance = (int*) (trace_bits + MAP_SIZE + 16);
   u64* r_tag = (u64*) (trace_bits + MAP_SIZE + 24);
 
   if (*total_count > 0)
@@ -950,7 +951,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     reach_tag = 1;
   }
   else
-    triggering_distance = -1.0;
+    triggering_distance = -DBL_MAX;
   
 
 #else
@@ -1013,7 +1014,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   }
 
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
-  if (triggering_distance > -1 && triggering_distance < min_triggering_distance) ret += 3;
+  if (triggering_distance > -DBL_MAX && triggering_distance < min_triggering_distance) ret += 3;
 
   return ret;
 
