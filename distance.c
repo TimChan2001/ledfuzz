@@ -21,9 +21,10 @@ void setup_shm() {
 }
 
 void distance_instrument(int distance) {
-    if (!trace_bits) return;
+    if (!trace_bits) exit(1);
     uint64_t *shm_distance = (uint64_t *)(trace_bits + MAP_SIZE + 16);
     *shm_distance = distance;
+    if (distance < 0) *shm_distance = 0;
     uint64_t *reach_tag = (uint64_t *)(trace_bits + MAP_SIZE + 24);
     *reach_tag = 1;
 }
