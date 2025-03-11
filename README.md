@@ -25,7 +25,6 @@ Insert a **triggering condition monitor** into the target program and compile it
 ```c
 + #include "distance.h"
 
-+ setup_shm();
 + distance_instrument(int distance);
 ```
 
