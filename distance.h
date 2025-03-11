@@ -7,7 +7,6 @@
 
 extern volatile uint8_t *trace_bits;
 
-void setup_shm();
 void distance_instrument(int distance);
 
 #endif

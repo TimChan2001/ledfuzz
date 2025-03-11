@@ -9,7 +9,7 @@
 
 volatile uint8_t *trace_bits = NULL;
 
-void setup_shm() {
+void distance_instrument(int distance) {
     char *shm_env = getenv("__AFL_SHM_ID");
     if (shm_env && !trace_bits) {
         int shm_id = atoi(shm_env);
@@ -23,10 +23,6 @@ void setup_shm() {
         uint64_t *reach_tag_orig = (uint64_t *)(trace_bits + MAP_SIZE + 24);
         *reach_tag_orig = 0;
     }
-    
-}
-
-void distance_instrument(int distance) {
     if (!trace_bits) {
         perror("Shm not set");
         abort();
