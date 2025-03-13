@@ -30,7 +30,7 @@ void distance_instrument(int distance) {
         fprintf(file, "rt: %d\n",*reach_tag);
         if (!(*reach_tag) || distance < *shm_distance)
             *shm_distance = distance;
-        *reach_tag = 217;
+        *reach_tag = 1;
         fprintf(file, "update: %d\n",distance);
         fprintf(file, "orig_2: %d\n\n",*shm_distance);
     }
