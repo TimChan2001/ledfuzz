@@ -4897,7 +4897,7 @@ static u32 calculate_score(struct queue_entry* q) {
 
   }
 
-  if (q->trig_distance < 0) {
+  if (q->trig_distance == -DBL_MAX) {
     if (reach_tag == 1)
       power_factor *= T; // reduce power for unreachable inputs
   }
