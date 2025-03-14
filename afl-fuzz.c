@@ -293,6 +293,7 @@ static double min_distance = -1.0;     /* Minimal distance for any input   */
 static double triggering_distance = -DBL_MAX;      /* Distance to triggering         */
 static double max_triggering_distance = -DBL_MAX;  /* Maximal distance to triggering */
 static double min_triggering_distance = -DBL_MAX;  /* Minimal distance to triggering */
+static double plus_trig_triggering_distance = -DBL_MAX;  /* Triggering distance to add to queue */
 static u8 reach_tag = 0;                           /* Reached or not                 */
 
 static u32 t_x = 10;                  /* Time to exploitation (Default: 10 min) */
@@ -962,9 +963,22 @@ static inline u8 has_new_bits(u8* virgin_map) {
   u32  i = (MAP_SIZE >> 2);
 
   /* Calculate distance of current input to targets */
-  u32* triggering_distance = (u32*)(trace_bits + MAP_SIZE);
+  u32* total_distance = (u32*)(trace_bits + MAP_SIZE);
+  u32* total_count = (u32*)(trace_bits + MAP_SIZE + 4);
+  int* t_distance = (int*) (trace_bits + MAP_SIZE + 8);
+  u32* r_tag = (u32*) (trace_bits + MAP_SIZE + 12);
 
-  cur_distance = (double) (*triggering_distance);
+  if (*total_count > 0) {
+    cur_distance = (double) (*total_distance) / (double) (*total_count);
+  else
+    cur_distance = -1.0;
+
+  if (*r_tag == 1) {
+    triggering_distance = (double) (*t_distance);
+    reach_tag = 1;
+  }
+  else
+    triggering_distance = -DBL_MAX;
 
 #endif /* ^__x86_64__ */
 
@@ -1014,7 +1028,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   }
 
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
-  if (triggering_distance > -DBL_MAX && triggering_distance < min_triggering_distance) ret += 3;
+  if (triggering_distance > -DBL_MAX && triggering_distance < plus_trig_triggering_distance) ret += 3;
 
   return ret;
 
@@ -2666,14 +2680,13 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
     /* This is relevant when test cases are added w/out save_if_interesting */
 
-    u8 hnb_t = 217;
-
     if (q->distance <= 0) {
 
       /* This calculates cur_distance */
-      hnb_t = has_new_bits(virgin_bits);
+      has_new_bits(virgin_bits);
 
       q->distance = cur_distance;
+      q->trig_distance = triggering_distance;
       if (cur_distance > 0) {
 
         if (max_distance <= 0) {
@@ -2685,13 +2698,22 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
       }
 
+      if (triggering_distance > -DBL_MAX) {
+
+        if (max_triggering_distance == -DBL_MAX) {
+          max_triggering_distance = triggering_distance;
+          min_triggering_distance = triggering_distance;
+        }
+        if (triggering_distance > max_triggering_distance) max_triggering_distance = triggering_distance;
+        if (triggering_distance < min_triggering_distance) min_triggering_distance = triggering_distance;
+
+      }
+
     }
 
     if (q->exec_cksum != cksum) {
       
-      u8 hnb = hnb_t;
-      if (hnb == 217)
-        hnb = has_new_bits(virgin_bits);
+      u8 hnb = has_new_bits(virgin_bits);
       if (hnb > new_bits) new_bits = hnb;
 
       if (q->exec_cksum) {
@@ -3239,6 +3261,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     fn = alloc_printf("%s/queue/id:%06u,%llu,%s", out_dir, queued_paths,
                       get_cur_time() - start_time,
                       describe_op(hnb));
+    plus_trig_triggering_distance = min_triggering_distance;
 
 #else
 
@@ -4911,7 +4934,6 @@ static u32 calculate_score(struct queue_entry* q) {
         double p = (1.0 - normalized_t_d) * (1.0 - T) + 0.5 * T;
         double power_factor_t = pow(2.0, 2.0 * (double) log2(MAX_FACTOR) * (p - 0.5));
         power_factor += power_factor_t;
-        printf("power_factor_t: %f\n", power_factor_t);
 
     }// else WARNF ("Normalized distance negative: %f", normalized_d);
   }
