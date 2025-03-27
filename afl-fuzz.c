@@ -246,7 +246,8 @@ struct queue_entry {
       has_new_cov,                    /* Triggers new coverage?           */
       var_behavior,                   /* Variable behavior?               */
       favored,                        /* Currently favored?               */
-      fs_redundant;                   /* Marked as redundant in the fs?   */
+      fs_redundant,                   /* Marked as redundant in the fs?   */
+      plus_trig;                      /* Plus trig input?                 */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
       exec_cksum;                     /* Checksum of the execution trace  */
@@ -325,7 +326,8 @@ enum {
   /* 13 */ STAGE_EXTRAS_UI,
   /* 14 */ STAGE_EXTRAS_AO,
   /* 15 */ STAGE_HAVOC,
-  /* 16 */ STAGE_SPLICE
+  /* 16 */ STAGE_SPLICE,
+  /* 17 */ STAGE_TRIG
 };
 
 /* Stage value types */
@@ -1393,6 +1395,9 @@ static void cull_queue(void) {
 
   while (q) {
     q->favored = 0;
+    q->plus_trig = 0;
+    if (strcmp((const char *)(q->fname + strlen((const char *)q->fname) - 5), "+trig") == 0)
+      q->plus_trig = 1;
     q = q->next;
   }
 
@@ -4369,7 +4374,8 @@ static void show_stats(void) {
        "  imported : " cRST "%-10s " bSTG bV "\n", tmp,
        sync_id ? DI(queued_imported) : (u8*)"n/a");
 
-  sprintf(tmp, "%s/%s, %s/%s",
+  sprintf(tmp, "%s/%s, %s/%s, %s/%s",
+          DI(stage_finds[STAGE_TRIG]), DI(stage_cycles[STAGE_TRIG]),
           DI(stage_finds[STAGE_HAVOC]), DI(stage_cycles[STAGE_HAVOC]),
           DI(stage_finds[STAGE_SPLICE]), DI(stage_cycles[STAGE_SPLICE]));
 
@@ -5137,6 +5143,28 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
+struct queue_entry* find_source_seed() {
+  const char *key = "src:";
+  const char *p = strstr(queue_cur->fname, key);
+  if (!p) {
+      return NULL;
+  } else {
+    p += strlen(key);  // move past "src:"
+    char buffer[32];
+    int i = 0;
+    while (*p && *p != ',' && *p != '+' && i < sizeof(buffer) - 1) {
+      buffer[i++] = *p++;
+    }
+    buffer[i] = '\0';  // null-terminate
+    int q_id = atoi(buffer);
+    struct queue_entry* q_src = queue;
+    while (q_id) {
+      q_id--;
+      q_src = q_src->next;
+    }
+    return q_src;
+  }
+}
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -5169,7 +5197,7 @@ static u8 fuzz_one(char** argv) {
        possibly skip to them at the expense of already-fuzzed or non-favored
        cases. */
 
-    if ((queue_cur->was_fuzzed || !queue_cur->favored) &&
+    if ((queue_cur->was_fuzzed || (!queue_cur->favored && queue_cur->plus_trig == 0)) &&
         UR(100) < SKIP_TO_NEW_PROB) return 1;
 
   } else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
@@ -6253,6 +6281,173 @@ skip_extras:
    ****************/
 
 havoc_stage:
+
+  stage_name = "trig";
+  stage_short = "trig";
+
+  orig_hit_cnt = queued_paths + unique_crashes;
+
+  if (queue_cur->plus_trig && !queue_cur->was_fuzzed && !splice_cycle) {
+    struct queue_entry *queue_cur_src = find_source_seed();
+    if (queue_cur_src->plus_trig == 0) { // generated from non-plus-trig seed 
+      /* diff */ 
+      s32 fd_src = open(queue_cur_src->fname, O_RDONLY);
+      if (fd_src < 0) PFATAL("Unable to open '%s'", queue_cur_src->fname);
+      s32 src_len = queue_cur_src->len;
+      u8* src_buf = mmap(0, src_len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd_src, 0);
+      if (src_buf == MAP_FAILED) PFATAL("Unable to mmap '%s'", queue_cur_src->fname);
+      close(fd_src);
+
+      int is_t_byte = 0;
+      stage_max = MIN(src_len, len);
+      for (int t_byte = 0; t_byte < MIN(src_len, len); t_byte++) {
+        stage_cur = t_byte;
+        if (src_buf[t_byte] != orig_in[t_byte]) {
+          /* mutate and check +trig */
+          // try value change
+          stage_val_type = STAGE_VAL_LE; 
+          stage_cur_byte = t_byte;
+          out_buf[stage_cur_byte] += 128;
+          if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+          stage_cycles[STAGE_TRIG] += 1;
+          if (triggering_distance != queue_cur->trig_distance && triggering_distance > -DBL_MAX) is_t_byte = 1;
+
+          out_buf[stage_cur_byte] -= 128;
+
+          // try delete
+          if (len > 1) {
+            stage_val_type = STAGE_VAL_NONE; 
+            memmove(out_buf + t_byte, out_buf + t_byte + 1, len - t_byte - 1);
+            if (common_fuzz_stuff(argv, out_buf, len - 1)) goto abandon_entry;
+            stage_cycles[STAGE_TRIG] += 1;
+            if (triggering_distance != queue_cur->trig_distance && triggering_distance > -DBL_MAX) is_t_byte += 2;
+
+            out_buf = ck_realloc(out_buf, len);
+            memcpy(out_buf, in_buf, len);
+          }
+
+          // try insert
+          if (len + 1 < MAX_FILE) {
+            stage_val_type = STAGE_VAL_NONE; 
+            u8* new_buf = ck_alloc_nozero(len + 1);
+            memcpy(new_buf, out_buf, t_byte);
+            new_buf[t_byte] = UR(256);
+            memcpy(new_buf + t_byte + 1, out_buf + t_byte, len - t_byte);
+            ck_free(out_buf);
+            out_buf = new_buf;
+            if (common_fuzz_stuff(argv, out_buf, len + 1)) goto abandon_entry;
+            stage_cycles[STAGE_TRIG] += 1;
+            if (triggering_distance != queue_cur->trig_distance && triggering_distance > -DBL_MAX) is_t_byte += 4;
+
+            memcpy(out_buf, in_buf, len);
+          }
+
+          /* systematically mutate */
+          if (!is_t_byte) continue;
+          show_stats();
+          if (is_t_byte & 1) {
+            stage_val_type = STAGE_VAL_LE; 
+            stage_cur_byte = t_byte;
+
+            /* byte mutation */
+            u8 orig_val = out_buf[stage_cur_byte];
+            for(u16 idx = 0;idx < 256;idx++){
+              if((u8)idx != orig_val && (u8)idx != (u8)(orig_val + 128)){
+                out_buf[stage_cur_byte] = (u8)idx;
+                stage_cur_val = idx;
+                if (common_fuzz_stuff(argv, out_buf, len))goto abandon_entry;
+                stage_cycles[STAGE_TRIG] += 1;
+              }
+            }
+
+            /* interesting value 16 */
+            if(stage_cur_byte + 1 < len){
+              for(int idx = 0;idx < 19;idx++){
+                s16 interesting_16_value = interesting_16[idx];
+                *(u16*)(out_buf + stage_cur_byte) = interesting_16_value;
+                stage_cur_val = interesting_16_value;
+                if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+                *(u16*)(out_buf + stage_cur_byte) = SWAP16(interesting_16_value);
+                stage_cur_val = SWAP16(interesting_16_value);
+                if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+                stage_cycles[STAGE_TRIG] += 2;
+              }
+            }
+
+            /* interesting value 32 */
+            if(stage_cur_byte + 3 < len){
+              for(int idx = 0;idx < 27;idx++){
+                s32 interesting_32_value = interesting_32[idx];
+                *(u32*)(out_buf + stage_cur_byte) = interesting_32_value;
+                stage_cur_val = interesting_32_value;
+                if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+                *(u32*)(out_buf + stage_cur_byte) = SWAP32(interesting_32_value);
+                stage_cur_val = SWAP32(interesting_32_value);
+                if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+                stage_cycles[STAGE_TRIG] += 2;
+              }
+            }
+            memcpy(out_buf, in_buf, len);
+          }
+
+          if (is_t_byte & 2) {
+            /* Delete bytes. */
+            stage_val_type = STAGE_VAL_NONE;
+            u32 del_from = t_byte;
+            for (int i = 0; i < UR(MIN(len - del_from, 24)) + 2; i++) {
+              if (del_from > len - 3) continue;
+              u32 del_len = choose_block_len(len - del_from - 1);
+              if (del_len < 2) continue;
+              memmove(out_buf + del_from, out_buf + del_from + del_len,
+                      len - del_from - del_len);
+              if (common_fuzz_stuff(argv, out_buf, len - del_len)) goto abandon_entry;
+              out_buf = ck_realloc(out_buf, len);
+              memcpy(out_buf, in_buf, len);
+            }
+          }
+
+          if (is_t_byte & 4) {
+            /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+            if (len + HAVOC_BLK_XL < MAX_FILE) {
+              stage_val_type = STAGE_VAL_NONE;
+              u32 clone_to   = t_byte;
+              for (int i = 0; i < UR(24) + 2; i++) {
+                u8  actually_clone = UR(4);
+                u32 clone_from, clone_len;
+                u8* new_buf;
+                if (actually_clone) {
+                  clone_len  = choose_block_len(len);
+                  clone_from = UR(len - clone_len + 1);
+                } else {
+                  clone_len = choose_block_len(HAVOC_BLK_XL);
+                  clone_from = 0;
+                }
+                
+                new_buf = ck_alloc_nozero(len + clone_len);
+                /* Head */
+                memcpy(new_buf, out_buf, clone_to);
+                /* Inserted part */
+                if (actually_clone)
+                  memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+                else
+                  memset(new_buf + clone_to,
+                        UR(2) ? UR(256) : out_buf[UR(len)], clone_len);
+                /* Tail */
+                memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                      len - clone_to);
+                ck_free(out_buf);
+                out_buf = new_buf;
+                if (common_fuzz_stuff(argv, out_buf, len + clone_len)) goto abandon_entry;
+                memcpy(out_buf, in_buf, len);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  new_hit_cnt = queued_paths + unique_crashes;
+  stage_finds[STAGE_TRIG]  += new_hit_cnt - orig_hit_cnt;
 
   stage_cur_byte = -1;
 
