@@ -12,11 +12,10 @@
 
 #define MAP_SIZE (1 << 16)
 
-volatile uint8_t *trace_bits = NULL;
-
-void distance_instrument(int distance) {
+static void distance_instrument(int distance) {
     FILE *file = fopen("/magma_out/output.txt", "a");
     char *shm_env = getenv("__AFL_SHM_ID");
+    uint8_t *trace_bits = NULL;
     if (shm_env) {
         int shm_id = atoi(shm_env);
         trace_bits = (uint8_t *) shmat(shm_id, NULL, 0);
