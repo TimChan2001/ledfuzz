@@ -25,16 +25,16 @@ Insert a **triggering condition monitor** into the target program and compile it
 ```c
 + #include "distance.h"
 
-+ distance_instrument(int distance);
++ distance_instrument(double distance, uint8_t save_index, uint8_t exec_sequence, uint8_t conjunct, double weight);
 ```
 
-##### 3. Perform Fuzzing and Observe Terminal Output
+##### 3. Start Fuzzing
+```
+afl-fuzz -a [ins_num] -s [seq_num] ...
+```
+
+##### 4. Observe Terminal Output
 Current maximum/minimum triggering distance:
-```
+```c
 printf("max_t_d: %f  min_t_d: %f\n", max_triggering_distance, min_triggering_distance);
-```
-
-Current triggering distance corresponding power factor:
-```
-printf("power_factor_t: %f\n", power_factor_t);
 ```

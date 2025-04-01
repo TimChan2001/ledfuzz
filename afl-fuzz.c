@@ -296,6 +296,9 @@ static double max_triggering_distance = -DBL_MAX;  /* Maximal distance to trigge
 static double min_triggering_distance = -DBL_MAX;  /* Minimal distance to triggering */
 static double plus_trig_triggering_distance = -DBL_MAX;  /* Triggering distance to add to queue */
 static u8 reach_tag = 0;                           /* Reached or not                 */
+static u8 ins_num = 0;                             /* Number of distance instrument */
+static u8 seq_num = 0;                             /* Number of distance sequence */
+#define DISTANCE_MAX 1000000.0
 
 static u32 t_x = 10;                  /* Time to exploitation (Default: 10 min) */
 
@@ -941,21 +944,55 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
   u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
-  int* t_distance = (int*) (trace_bits + MAP_SIZE + 16);
-  u64* r_tag = (u64*) (trace_bits + MAP_SIZE + 24);
 
   if (*total_count > 0)
     cur_distance = (double) (*total_distance) / (double) (*total_count);
   else
     cur_distance = -1.0;
-  
-  if (*r_tag == 1) {
-    triggering_distance = (double) (*t_distance);
-    reach_tag = 1;
+
+  /* Calculate triggering distance */
+  double t_distance[8];
+  u8 seq[8];
+  u8 conj[8];
+  double wei[8];
+  u8 ins[8];
+
+  for (int i = 0; i < ins_num; i++) {
+    ins[i] = *(trace_bits + MAP_SIZE + 16 + i);
+    if (ins[i]) {
+      reach_tag = 1;
+      triggering_distance = 0.0;
+      t_distance[i] = *((double *)(trace_bits + MAP_SIZE + 32 + i * 18));
+      seq[i] = *(trace_bits + MAP_SIZE + 32 + i * 18 + 8);
+      conj[i] = *(trace_bits + MAP_SIZE + 32 + i * 18 + 8 + 1);
+      wei[i] = *((double *)(trace_bits + MAP_SIZE + 32 + i * 18 + 8 + 1 + 1));
+    }
   }
-  else
-    triggering_distance = -DBL_MAX;
-  
+
+  double conj_cal[8] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+
+  for (int i = 0; i < seq_num; i++) {
+    if (*(trace_bits + MAP_SIZE + 24 + i) == 0) {
+      triggering_distance += (seq_num - i) * DISTANCE_MAX;
+      break;
+    }
+    for (int j = 0; j < ins_num; j++) {
+      if (ins[j] && seq[j] == i) {
+        if (conj_cal[conj[j]] == -1.0)
+          conj_cal[conj[j]] = t_distance[j] * wei[j];
+        else
+          conj_cal[conj[j]] += t_distance[j] * wei[j];
+      }
+    }
+    double min_conj = conj_cal[0];
+    for (int j = 1; j < 8; j++)
+      if (conj_cal[j] >= 0 && conj_cal[j] < min_conj) min_conj = conj_cal[j];
+
+    if (min_conj > 0) triggering_distance += min_conj;
+    for (int j = 0; j < 8; j++) conj_cal[j] = -1.0;
+  }
+
+  if(!reach_tag) triggering_distance = -DBL_MAX;
 
 #else
 
@@ -967,20 +1004,13 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u32* total_distance = (u32*)(trace_bits + MAP_SIZE);
   u32* total_count = (u32*)(trace_bits + MAP_SIZE + 4);
-  int* t_distance = (int*) (trace_bits + MAP_SIZE + 8);
-  u32* r_tag = (u32*) (trace_bits + MAP_SIZE + 12);
 
   if (*total_count > 0) {
     cur_distance = (double) (*total_distance) / (double) (*total_count);
   else
     cur_distance = -1.0;
 
-  if (*r_tag == 1) {
-    triggering_distance = (double) (*t_distance);
-    reach_tag = 1;
-  }
-  else
-    triggering_distance = -DBL_MAX;
+  triggering_distance = -DBL_MAX;
 
 #endif /* ^__x86_64__ */
 
@@ -1444,7 +1474,7 @@ EXP_ST void setup_shm(void) {
   memset(virgin_crash, 255, MAP_SIZE);
 
   /* Allocate 24 byte more for distance info */
-  shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 32, IPC_CREAT | IPC_EXCL | 0600);
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 176, IPC_CREAT | IPC_EXCL | 0600);
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
@@ -2368,7 +2398,7 @@ static u8 run_target(char** argv, u32 timeout) {
      must prevent any earlier operations from venturing into that
      territory. */
 
-  memset(trace_bits, 0, MAP_SIZE + 32);
+  memset(trace_bits, 0, MAP_SIZE + 176);
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -8138,7 +8168,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qz:c:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qz:c:a:s:")) > 0)
 
     switch (opt) {
 
@@ -8341,6 +8371,18 @@ int main(int argc, char** argv) {
 
         }
 
+        break;
+
+      case 'a': /* number of distance instrument */
+
+        if (ins_num) FATAL("Multiple -a options not supported");
+        ins_num = atoi(optarg);
+        break;
+
+      case 's': /* number of distance sequence */
+
+        if (seq_num) FATAL("Multiple -s options not supported");
+        seq_num = atoi(optarg);
         break;
 
       default:
