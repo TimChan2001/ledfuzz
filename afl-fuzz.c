@@ -6328,9 +6328,10 @@ havoc_stage:
       if (src_buf == MAP_FAILED) PFATAL("Unable to mmap '%s'", queue_cur_src->fname);
       close(fd_src);
 
-      int is_t_byte = 0;
+      int is_t_byte;
       stage_max = MIN(src_len, len);
       for (int t_byte = 0; t_byte < MIN(src_len, len); t_byte++) {
+        is_t_byte = 0;
         stage_cur = t_byte;
         if (src_buf[t_byte] != orig_in[t_byte]) {
           /* mutate and check +trig */
@@ -6340,7 +6341,7 @@ havoc_stage:
           out_buf[stage_cur_byte] += 128;
           if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
           stage_cycles[STAGE_TRIG] += 1;
-          if (triggering_distance != queue_cur->trig_distance && triggering_distance > -DBL_MAX) is_t_byte = 1;
+          if (triggering_distance != queue_cur->trig_distance && triggering_distance > -DBL_MAX) is_t_byte += 1;
 
           out_buf[stage_cur_byte] -= 128;
 
