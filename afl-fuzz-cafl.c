@@ -993,7 +993,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
   if (cur_distance != -1.0) {
     if(!reach_tag)
-      cur_distance += DISTANCE_MAX * 8;
+      cur_distance += DISTANCE_MAX * seq_num;
     else
       cur_distance += triggering_distance;
   }
