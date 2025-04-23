@@ -14,7 +14,7 @@
 
 /* 8x u8  8x u8  8x [double u8 u8 double] */
 
-static void distance_instrument(double distance, uint8_t save_index, uint8_t exec_sequence, uint8_t conjunct, double weight) {
+static void distance_instrument_cafl(double distance, uint8_t save_index, uint8_t exec_sequence, uint8_t conjunct, double weight) {
     char *shm_env = getenv("__AFL_SHM_ID");
     uint8_t *trace_bits = NULL;
     if (shm_env) {
