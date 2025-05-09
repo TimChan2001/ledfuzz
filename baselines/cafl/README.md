@@ -35,3 +35,9 @@
    
 
 Start fuzzing with afl-fuzz (ver. afl-fuzz-cafl.c).
+
+
+### Notes
+- Compilation Requirements
+   The functions in locate_ptr.h rely on debugging utilities from LLVM's AddressSanitizer, so the code must be compiled with Clang, and the following flags are required during compilation:
+   "-g -fsanitize=address"
