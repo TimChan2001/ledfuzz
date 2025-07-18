@@ -1,0 +1,40 @@
+Vulnerability Type: null-pointer-dereference
+Crash/Trigger Point(s): in AnnotInk::draw(Gfx*, bool) Annot.cc:5917:23
+Bug Call Trace:
+    AddressSanitizer:DEADLYSIGNAL
+    =================================================================
+    ==154785==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008 (pc 0x000000a7a172 bp 0x7ffd4847fad0 sp 0x7ffd4847f780 T0)
+    ==154785==The signal is caused by a READ memory access.
+    ==154785==Hint: address points to the zero page.
+        #0 0xa7a171 in std::vector<AnnotCoord, std::allocator<AnnotCoord> >::size() const /usr/bin/../lib/gcc/x86_64-linux-gnu/7.5.0/../../../../include/c++/7.5.0/bits/stl_vector.h:671:66
+        #1 0xa7a171 in AnnotPath::getCoordsLength() const /magma/targets/poppler/repo/poppler/Annot.h:127:49
+        #2 0xa7a171 in AnnotInk::draw(Gfx*, bool) /magma/targets/poppler/repo/poppler/Annot.cc:5917:23
+        #3 0x6f6ead in Page::displaySlice(OutputDev*, double, double, int, bool, bool, int, int, int, int, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /magma/targets/poppler/repo/poppler/Page.cc:594:41
+        #4 0x70fc65 in PDFDoc::displayPageSlice(OutputDev*, int, double, double, int, bool, bool, bool, int, int, int, int, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /magma/targets/poppler/repo/poppler/PDFDoc.cc:655:24
+        #5 0x506821 in poppler::page_renderer::render_page(poppler::page const*, double, double, int, int, int, int, poppler::rotation_enum) const /magma/targets/poppler/repo/cpp/poppler-page-renderer.cpp:284:13
+        #6 0x4cbd26 in LLVMFuzzerTestOneInput /magma/targets/poppler/src/pdf_fuzzer.cc:43:7
+        #7 0xdc1ea3 in main /magma/fuzzers/afl_asan/repo/afl_driver.cpp:201:7
+        #8 0x7f0c5a23bc86 in __libc_start_main /build/glibc-CVJwZb/glibc-2.27/csu/../csu/libc-start.c:310
+        #9 0x4219d9 in _start (/magma_out/pdf_fuzzer+0x4219d9)
+
+    AddressSanitizer can not provide additional info.
+    SUMMARY: AddressSanitizer: SEGV /usr/bin/../lib/gcc/x86_64-linux-gnu/7.5.0/../../../../include/c++/7.5.0/bits/stl_vector.h:671:66 in std::vector<AnnotCoord, std::allocator<AnnotCoord> >::size() const
+    ==154785==ABORTING
+
+Patch:
+    diff --git a/poppler/Annot.cc b/poppler/Annot.cc
+    index 37165e38..095a9d09 100644
+    --- a/poppler/Annot.cc
+    +++ b/poppler/Annot.cc
+    @@ ... @@ void AnnotInk::draw(Gfx *gfx, bool printing) {
+    
+            for (int i = 0; i < inkListLength; ++i) {
+                const AnnotPath *path = inkList[i];
+    +#ifdef MAGMA_ENABLE_FIXES
+                if (path && path->getCoordsLength() != 0) {
+    +#else
+    +            if (path->getCoordsLength() != 0) {
+    +#endif
+                    appearBuilder.appendf("{0:.2f} {1:.2f} m\n", path->getX(0) - rect->x1, path->getY(0) - rect->y1);
+                    appearBBox->extendTo(path->getX(0) - rect->x1, path->getY(0) - rect->y1);
+    

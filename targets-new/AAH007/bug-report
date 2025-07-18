@@ -1,0 +1,19 @@
+Vulnerability Type: Memory Leak
+Crash/Trigger Point(s): in png_free_data png.c:620
+Bug Call Trace: main,LLVMFuzzerTestOneInput,png_destroy_read_struct,png_destroy_info_struct,png_free_data
+Patch:
+    diff --git a/pngrutil.c b/pngrutil.c
+    index d5fa08c..2a08277 100644
+    --- a/pngrutil.c
+    +++ b/pngrutil.c
+    @@ -2059,7 +2059,9 @@ png_handle_eXIf(png_structrp png_ptr, png_inforp info_ptr, png_uint_32 length)
+        return;
+        }
+    
+    +#ifdef MAGMA_ENABLE_FIXES
+        info_ptr->free_me |= PNG_FREE_EXIF;
+    +#endif
+    
+        info_ptr->eXIf_buf = png_voidcast(png_bytep,
+                png_malloc_warn(png_ptr, length));
+

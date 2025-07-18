@@ -1,0 +1,185 @@
+In pngrutil.c:
+911 /* Read and check the palette */
+912 void /* PRIVATE */
+913 png_handle_PLTE(png_structrp png_ptr, png_inforp info_ptr, png_uint_32 length)
+914 {
+915    png_color palette[PNG_MAX_PALETTE_LENGTH];
+916    int max_palette_length, num, i;
+917 #ifdef PNG_POINTER_INDEXING_SUPPORTED
+918    png_colorp pal_ptr;
+919 #endif
+920 
+921    png_debug(1, "in png_handle_PLTE");
+922 
+923    if ((png_ptr->mode & PNG_HAVE_IHDR) == 0)
+924       png_chunk_error(png_ptr, "missing IHDR");
+925 
+926    /* Moved to before the 'after IDAT' check below because otherwise duplicate
+927     * PLTE chunks are potentially ignored (the spec says there shall not be more
+928     * than one PLTE, the error is not treated as benign, so this check trumps
+929     * the requirement that PLTE appears before IDAT.)
+930     */
+931    else if ((png_ptr->mode & PNG_HAVE_PLTE) != 0)
+932       png_chunk_error(png_ptr, "duplicate");
+933 
+934    else if ((png_ptr->mode & PNG_HAVE_IDAT) != 0)
+935    {
+936       /* This is benign because the non-benign error happened before, when an
+937        * IDAT was encountered in a color-mapped image with no PLTE.
+938        */
+939       png_crc_finish(png_ptr, length);
+940       png_chunk_benign_error(png_ptr, "out of place");
+941       return;
+942    }
+943 
+944    png_ptr->mode |= PNG_HAVE_PLTE;
+945 
+946    if ((png_ptr->color_type & PNG_COLOR_MASK_COLOR) == 0)
+947    {
+948       png_crc_finish(png_ptr, length);
+949       png_chunk_benign_error(png_ptr, "ignored in grayscale PNG");
+950       return;
+951    }
+952 
+953 #ifndef PNG_READ_OPT_PLTE_SUPPORTED
+954    if (png_ptr->color_type != PNG_COLOR_TYPE_PALETTE)
+955    {
+956       png_crc_finish(png_ptr, length);
+957       return;
+958    }
+959 #endif
+960 
+961    if (length > 3*PNG_MAX_PALETTE_LENGTH || length % 3)
+962    {
+963       png_crc_finish(png_ptr, length);
+964 
+965       if (png_ptr->color_type != PNG_COLOR_TYPE_PALETTE)
+966          png_chunk_benign_error(png_ptr, "invalid");
+967 
+968       else
+969          png_chunk_error(png_ptr, "invalid");
+970 
+971       return;
+972    }
+973 
+974    /* The cast is safe because 'length' is less than 3*PNG_MAX_PALETTE_LENGTH */
+975    num = (int)length / 3;
+976 
+977    /* If the palette has 256 or fewer entries but is too large for the bit
+978     * depth, we don't issue an error, to preserve the behavior of previous
+979     * libpng versions. We silently truncate the unused extra palette entries
+980     * here.
+981     */
+982    if (png_ptr->color_type == PNG_COLOR_TYPE_PALETTE)
+983       max_palette_length = (1 << png_ptr->bit_depth);
+984    else
+985       max_palette_length = PNG_MAX_PALETTE_LENGTH;
+986 
+987 #ifdef PNG_POINTER_INDEXING_SUPPORTED
+988    for (i = 0, pal_ptr = palette; i < num; i++, pal_ptr++)
+989    {
+990       png_byte buf[3];
+991 
+992       png_crc_read(png_ptr, buf, 3);
+993       pal_ptr->red = buf[0];
+994       pal_ptr->green = buf[1];
+995       pal_ptr->blue = buf[2];
+996    }
+997 #else
+998    for (i = 0; i < num; i++)
+999    {
+1000       png_byte buf[3];
+1001 
+1002       png_crc_read(png_ptr, buf, 3);
+1003       /* Don't depend upon png_color being any order */
+1004       palette[i].red = buf[0];
+1005       palette[i].green = buf[1];
+1006       palette[i].blue = buf[2];
+1007    }
+1008 #endif
+1009 
+1010    /* If we actually need the PLTE chunk (ie for a paletted image), we do
+1011     * whatever the normal CRC configuration tells us.  However, if we
+1012     * have an RGB image, the PLTE can be considered ancillary, so
+1013     * we will act as though it is.
+1014     */
+1015 #ifndef PNG_READ_OPT_PLTE_SUPPORTED
+1016    if (png_ptr->color_type == PNG_COLOR_TYPE_PALETTE)
+1017 #endif
+1018    {
+1019       png_crc_finish(png_ptr, (png_uint_32) (length - (unsigned int)num * 3));
+1020    }
+1021 
+1022 #ifndef PNG_READ_OPT_PLTE_SUPPORTED
+1023    else if (png_crc_error(png_ptr) != 0)  /* Only if we have a CRC error */
+1024    {
+1025       /* If we don't want to use the data from an ancillary chunk,
+1026        * we have two options: an error abort, or a warning and we
+1027        * ignore the data in this chunk (which should be OK, since
+1028        * it's considered ancillary for a RGB or RGBA image).
+1029        *
+1030        * IMPLEMENTATION NOTE: this is only here because png_crc_finish uses the
+1031        * chunk type to determine whether to check the ancillary or the critical
+1032        * flags.
+1033        */
+1034       if ((png_ptr->flags & PNG_FLAG_CRC_ANCILLARY_USE) == 0)
+1035       {
+1036          if ((png_ptr->flags & PNG_FLAG_CRC_ANCILLARY_NOWARN) != 0)
+1037             return;
+1038 
+1039          else
+1040             png_chunk_error(png_ptr, "CRC error");
+1041       }
+1042 
+1043       /* Otherwise, we (optionally) emit a warning and use the chunk. */
+1044       else if ((png_ptr->flags & PNG_FLAG_CRC_ANCILLARY_NOWARN) == 0)
+1045          png_chunk_warning(png_ptr, "CRC error");
+1046    }
+1047 #endif
+1048 
+1049    /* TODO: png_set_PLTE has the side effect of setting png_ptr->palette to its
+1050     * own copy of the palette.  This has the side effect that when png_start_row
+1051     * is called (this happens after any call to png_read_update_info) the
+1052     * info_ptr palette gets changed.  This is extremely unexpected and
+1053     * confusing.
+1054     *
+1055     * Fix this by not sharing the palette in this way.
+1056     */
+1057    png_set_PLTE(png_ptr, info_ptr, palette, num);
+1058 
+1059    /* The three chunks, bKGD, hIST and tRNS *must* appear after PLTE and before
+1060     * IDAT.  Prior to 1.6.0 this was not checked; instead the code merely
+1061     * checked the apparent validity of a tRNS chunk inserted before PLTE on a
+1062     * palette PNG.  1.6.0 attempts to rigorously follow the standard and
+1063     * therefore does a benign error if the erroneous condition is detected *and*
+1064     * cancels the tRNS if the benign error returns.  The alternative is to
+1065     * amend the standard since it would be rather hypocritical of the standards
+1066     * maintainers to ignore it.
+1067     */
+1068 #ifdef PNG_READ_tRNS_SUPPORTED
+1069    if (png_ptr->num_trans > 0 ||
+1070        (info_ptr != NULL && (info_ptr->valid & PNG_INFO_tRNS) != 0))
+1071    {
+1072       /* Cancel this because otherwise it would be used if the transforms
+1073        * require it.  Don't cancel the 'valid' flag because this would prevent
+1074        * detection of duplicate chunks.
+1075        */
+1076       png_ptr->num_trans = 0;
+1077 
+1078       if (info_ptr != NULL)
+1079          info_ptr->num_trans = 0;
+1080 
+1081       png_chunk_benign_error(png_ptr, "tRNS must be after");
+1082    }
+1083 #endif
+1084 
+1085 #ifdef PNG_READ_hIST_SUPPORTED
+1086    if (info_ptr != NULL && (info_ptr->valid & PNG_INFO_hIST) != 0)
+1087       png_chunk_benign_error(png_ptr, "hIST must be after");
+1088 #endif
+1089 
+1090 #ifdef PNG_READ_bKGD_SUPPORTED
+1091    if (info_ptr != NULL && (info_ptr->valid & PNG_INFO_bKGD) != 0)
+1092       png_chunk_benign_error(png_ptr, "bKGD must be after");
+1093 #endif
+1094 }

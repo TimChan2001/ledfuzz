@@ -1,0 +1,131 @@
+In tif_dirread.c:
+5828 static void allocChoppedUpStripArrays(TIFF* tif, uint32 nstrips,
+5829                                       uint64 stripbytes, uint32 rowsperstrip)
+5830 {
+5831     TIFFDirectory *td = &tif->tif_dir;
+5832     uint64 bytecount;
+5833     uint64 offset;
+5834     uint64 last_offset;
+5835     uint64 last_bytecount;
+5836     uint32 i;
+5837     uint64 *newcounts;
+5838     uint64 *newoffsets;
+5839 
+5840     offset = TIFFGetStrileOffset(tif, 0);
+5841     last_offset = TIFFGetStrileOffset(tif, td->td_nstrips-1);
+5842     last_bytecount = TIFFGetStrileByteCount(tif, td->td_nstrips-1);
+5843     if( last_offset > TIFF_UINT64_MAX - last_bytecount ||
+5844         last_offset + last_bytecount < offset )
+5845     {
+5846         return;
+5847     }
+5848     bytecount = last_offset + last_bytecount - offset;
+5849 
+5850     newcounts = (uint64*) _TIFFCheckMalloc(tif, nstrips, sizeof (uint64),
+5851                             "for chopped \"StripByteCounts\" array");
+5852     newoffsets = (uint64*) _TIFFCheckMalloc(tif, nstrips, sizeof (uint64),
+5853                             "for chopped \"StripOffsets\" array");
+5854     if (newcounts == NULL || newoffsets == NULL) {
+5855         /*
+5856         * Unable to allocate new strip information, give up and use
+5857         * the original one strip information.
+5858         */
+5859         if (newcounts != NULL)
+5860             _TIFFfree(newcounts);
+5861         if (newoffsets != NULL)
+5862             _TIFFfree(newoffsets);
+5863         return;
+5864     }
+5865 
+5866     /*
+5867      * Fill the strip information arrays with new bytecounts and offsets
+5868      * that reflect the broken-up format.
+5869      */
+5870     for (i = 0; i < nstrips; i++)
+5871     {
+5872         if (stripbytes > bytecount)
+5873             stripbytes = bytecount;
+5874         newcounts[i] = stripbytes;
+5875         newoffsets[i] = offset;
+5876         offset += stripbytes;
+5877         bytecount -= stripbytes;
+5878     }
+5879 
+5880     /*
+5881      * Replace old single strip info with multi-strip info.
+5882      */
+5883     td->td_stripsperimage = td->td_nstrips = nstrips;
+5884     TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, rowsperstrip);
+5885 
+5886     _TIFFfree(td->td_stripbytecount_p);
+5887     _TIFFfree(td->td_stripoffset_p);
+5888     td->td_stripbytecount_p = newcounts;
+5889     td->td_stripoffset_p = newoffsets;
+5890 #ifdef STRIPBYTECOUNTSORTED_UNUSED
+5891     td->td_stripbytecountsorted = 1;
+5892 #endif
+5893     tif->tif_flags |= TIFF_CHOPPEDUPARRAYS;
+5894 }
+
+5901 /*
+5902  * Replace a single strip (tile) of uncompressed data by multiple strips
+5903  * (tiles), each approximately STRIP_SIZE_DEFAULT bytes. This is useful for
+5904  * dealing with large images or for dealing with machines with a limited
+5905  * amount memory.
+5906  */
+5907 static void
+5908 ChopUpSingleUncompressedStrip(TIFF* tif)
+5909 {
+5910    register TIFFDirectory *td = &tif->tif_dir;
+5911    uint64 bytecount;
+5912    uint64 offset;
+5913    uint32 rowblock;
+5914    uint64 rowblockbytes;
+5915    uint64 stripbytes;
+5916    uint32 nstrips;
+5917    uint32 rowsperstrip;
+5918 
+5919    bytecount = TIFFGetStrileByteCount(tif, 0);
+5920         /* On a newly created file, just re-opened to be filled, we */
+5921         /* don't want strip chop to trigger as it is going to cause issues */
+5922         /* later ( StripOffsets and StripByteCounts improperly filled) . */
+5923         if( bytecount == 0 && tif->tif_mode != O_RDONLY )
+5924             return;
+5925    offset = TIFFGetStrileByteCount(tif, 0);
+5926    assert(td->td_planarconfig == PLANARCONFIG_CONTIG);
+5927    if ((td->td_photometric == PHOTOMETRIC_YCBCR)&&
+5928        (!isUpSampled(tif)))
+5929            rowblock = td->td_ycbcrsubsampling[1];
+5930    else
+5931            rowblock = 1;
+5932    rowblockbytes = TIFFVTileSize64(tif, rowblock);
+5933    /*
+5934     * Make the rows hold at least one scanline, but fill specified amount
+5935     * of data if possible.
+5936     */
+5937    if (rowblockbytes > STRIP_SIZE_DEFAULT) {
+5938            stripbytes = rowblockbytes;
+5939            rowsperstrip = rowblock;
+5940    } else if (rowblockbytes > 0 ) {
+5941            uint32 rowblocksperstrip;
+5942            rowblocksperstrip = (uint32) (STRIP_SIZE_DEFAULT / rowblockbytes);
+5943            rowsperstrip = rowblocksperstrip * rowblock;
+5944            stripbytes = rowblocksperstrip * rowblockbytes;
+5945    }
+5946    else
+5947        return;
+5948 
+5949    /*
+5950     * never increase the number of rows per strip
+5951     */
+5952    if (rowsperstrip >= td->td_rowsperstrip)
+5953            return;
+5954         uint64 nstrips64 = TIFFhowmany_64(bytecount, stripbytes);
+5955         if ((nstrips64==0)||(nstrips64>0xFFFFFFFF)) /* something is wonky, do nothing. */
+5956             return;
+5957         nstrips = (uint32)nstrips64;
+5958         /* If we are going to allocate a lot of memory, make sure that the */
+5959         /* file is as big as needed */
+5960 
+5961         allocChoppedUpStripArrays(tif, nstrips, stripbytes, rowsperstrip);
+5962 }

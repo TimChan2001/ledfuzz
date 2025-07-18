@@ -1,0 +1,41 @@
+Vulnerability Type: null-pointer-dereference
+Crash/Trigger Point(s): in SplashOutputDev::type3D1 SplashOutputDev.cc:2454
+Bug Call Trace:
+    AddressSanitizer:DEADLYSIGNAL
+    =================================================================
+    ==154459==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000002 (pc 0x0000008b0388 bp 0x7fff125f91d0 sp 0x7fff125f9000 T0)
+    ==154459==The signal is caused by a READ memory access.
+    ==154459==Hint: address points to the zero page.
+        #0 0x8b0387 in SplashOutputDev::type3D1(GfxState*, double, double, double, double, double, double) /magma/targets/poppler/repo/poppler/SplashOutputDev.cc
+        #1 0x5b285e in Gfx::execOp(Object*, Object*, int) /magma/targets/poppler/repo/poppler/Gfx.cc:802:5
+        #2 0x5b0e9a in Gfx::go(bool) /magma/targets/poppler/repo/poppler/Gfx.cc:679:13
+        #3 0x5b049f in Gfx::display(Object*, bool) /magma/targets/poppler/repo/poppler/Gfx.cc:640:5
+        #4 0x6f6a74 in Page::displaySlice(OutputDev*, double, double, int, bool, bool, int, int, int, int, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /magma/targets/poppler/repo/poppler/Page.cc:576:14
+        #5 0x70fc65 in PDFDoc::displayPageSlice(OutputDev*, int, double, double, int, bool, bool, bool, int, int, int, int, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /magma/targets/poppler/repo/poppler/PDFDoc.cc:655:24
+        #6 0x506821 in poppler::page_renderer::render_page(poppler::page const*, double, double, int, int, int, int, poppler::rotation_enum) const /magma/targets/poppler/repo/cpp/poppler-page-renderer.cpp:284:13
+        #7 0x4cbd26 in LLVMFuzzerTestOneInput /magma/targets/poppler/src/pdf_fuzzer.cc:43:7
+        #8 0xdc1ea3 in main /magma/fuzzers/afl_asan/repo/afl_driver.cpp:201:7
+        #9 0x7f6a2d4d6c86 in __libc_start_main /build/glibc-CVJwZb/glibc-2.27/csu/../csu/libc-start.c:310
+        #10 0x4219d9 in _start (/magma_out/pdf_fuzzer+0x4219d9)
+
+    AddressSanitizer can not provide additional info.
+    SUMMARY: AddressSanitizer: SEGV /magma/targets/poppler/repo/poppler/SplashOutputDev.cc in SplashOutputDev::type3D1(GfxState*, double, double, double, double, double, double)
+    ==154459==ABORTING
+
+Patch:
+    diff --git a/poppler/SplashOutputDev.cc b/poppler/SplashOutputDev.cc
+    index 3d2befc..fd731f9 100644
+    --- a/poppler/SplashOutputDev.cc
+    +++ b/poppler/SplashOutputDev.cc
+    @@ ... @@ void SplashOutputDev::type3D1(GfxState *state, double wx, double wy,
+        int i, j;
+    
+        // ignore multiple d0/d1 operators
+    +#ifdef MAGMA_ENABLE_FIXES
+        if (!t3GlyphStack || t3GlyphStack->haveDx) {
+    +#else
+    +    if (t3GlyphStack->haveDx) {
+    +#endif
+            return;
+        }
+        t3GlyphStack->haveDx = true;

@@ -1,0 +1,125 @@
+In SplashOutputDev.cc:
+2446 void SplashOutputDev::type3D1(GfxState *state, double wx, double wy, double llx, double lly, double urx, double ury)
+2447 {
+2448     T3FontCache *t3Font;
+2449     SplashColor color;
+2450     double xt, yt, xMin, xMax, yMin, yMax, x1, y1;
+2451     int i, j;
+2452 
+2453     // ignore multiple d0/d1 operators
+2454     if (t3GlyphStack->haveDx) {
+2455         return;
+2456     }
+2457     t3GlyphStack->haveDx = true;
+2458     // don't cache if we got a gsave/grestore before the d1
+2459     if (t3GlyphStack->doNotCache) {
+2460         return;
+2461     }
+2462 
+2463     if (unlikely(t3GlyphStack == nullptr)) {
+2464         error(errSyntaxWarning, -1, "t3GlyphStack was null in SplashOutputDev::type3D1");
+2465         return;
+2466     }
+2467 
+2468     if (unlikely(t3GlyphStack->origBitmap != nullptr)) {
+2469         error(errSyntaxWarning, -1, "t3GlyphStack origBitmap was not null in SplashOutputDev::type3D1");
+2470         return;
+2471     }
+2472 
+2473     if (unlikely(t3GlyphStack->origSplash != nullptr)) {
+2474         error(errSyntaxWarning, -1, "t3GlyphStack origSplash was not null in SplashOutputDev::type3D1");
+2475         return;
+2476     }
+2477 
+2478     t3Font = t3GlyphStack->cache;
+2479 
+2480     // check for a valid bbox
+2481     state->transform(0, 0, &xt, &yt);
+2482     state->transform(llx, lly, &x1, &y1);
+2483     xMin = xMax = x1;
+2484     yMin = yMax = y1;
+2485     state->transform(llx, ury, &x1, &y1);
+2486     if (x1 < xMin) {
+2487         xMin = x1;
+2488     } else if (x1 > xMax) {
+2489         xMax = x1;
+2490     }
+2491     if (y1 < yMin) {
+2492         yMin = y1;
+2493     } else if (y1 > yMax) {
+2494         yMax = y1;
+2495     }
+2496     state->transform(urx, lly, &x1, &y1);
+2497     if (x1 < xMin) {
+2498         xMin = x1;
+2499     } else if (x1 > xMax) {
+2500         xMax = x1;
+2501     }
+2502     if (y1 < yMin) {
+2503         yMin = y1;
+2504     } else if (y1 > yMax) {
+2505         yMax = y1;
+2506     }
+2507     state->transform(urx, ury, &x1, &y1);
+2508     if (x1 < xMin) {
+2509         xMin = x1;
+2510     } else if (x1 > xMax) {
+2511         xMax = x1;
+2512     }
+2513     if (y1 < yMin) {
+2514         yMin = y1;
+2515     } else if (y1 > yMax) {
+2516         yMax = y1;
+2517     }
+2518     if (xMin - xt < t3Font->glyphX || yMin - yt < t3Font->glyphY || xMax - xt > t3Font->glyphX + t3Font->glyphW || yMax - yt > t3Font->glyphY + t3Font->glyphH) {
+2519         if (t3Font->validBBox) {
+2520             error(errSyntaxWarning, -1, "Bad bounding box in Type 3 glyph");
+2521         }
+2522         return;
+2523     }
+2524 
+2525     if (t3Font->cacheTags == nullptr)
+2526         return;
+2527 
+2528     // allocate a cache entry
+2529     i = (t3GlyphStack->code & (t3Font->cacheSets - 1)) * t3Font->cacheAssoc;
+2530     for (j = 0; j < t3Font->cacheAssoc; ++j) {
+2531         if ((t3Font->cacheTags[i + j].mru & 0x7fff) == t3Font->cacheAssoc - 1) {
+2532             t3Font->cacheTags[i + j].mru = 0x8000;
+2533             t3Font->cacheTags[i + j].code = t3GlyphStack->code;
+2534             t3GlyphStack->cacheTag = &t3Font->cacheTags[i + j];
+2535             t3GlyphStack->cacheData = t3Font->cacheData + (i + j) * t3Font->glyphSize;
+2536         } else {
+2537             ++t3Font->cacheTags[i + j].mru;
+2538         }
+2539     }
+2540 
+2541     // save state
+2542     t3GlyphStack->origBitmap = bitmap;
+2543     t3GlyphStack->origSplash = splash;
+2544     const double *ctm = state->getCTM();
+2545     t3GlyphStack->origCTM4 = ctm[4];
+2546     t3GlyphStack->origCTM5 = ctm[5];
+2547 
+2548     // create the temporary bitmap
+2549     if (colorMode == splashModeMono1) {
+2550         bitmap = new SplashBitmap(t3Font->glyphW, t3Font->glyphH, 1, splashModeMono1, false);
+2551         splash = new Splash(bitmap, false, t3GlyphStack->origSplash->getScreen());
+2552         color[0] = 0;
+2553         splash->clear(color);
+2554         color[0] = 0xff;
+2555     } else {
+2556         bitmap = new SplashBitmap(t3Font->glyphW, t3Font->glyphH, 1, splashModeMono8, false);
+2557         splash = new Splash(bitmap, vectorAntialias, t3GlyphStack->origSplash->getScreen());
+2558         color[0] = 0x00;
+2559         splash->clear(color);
+2560         color[0] = 0xff;
+2561     }
+2562     splash->setMinLineWidth(s_minLineWidth);
+2563     splash->setThinLineMode(splashThinLineDefault);
+2564     splash->setFillPattern(new SplashSolidColor(color));
+2565     splash->setStrokePattern(new SplashSolidColor(color));
+2566     //~ this should copy other state from t3GlyphStack->origSplash?
+2567     state->setCTM(ctm[0], ctm[1], ctm[2], ctm[3], -t3Font->glyphX, -t3Font->glyphY);
+2568     updateCTM(state, 0, 0, 0, 0, 0, 0);
+2569 }

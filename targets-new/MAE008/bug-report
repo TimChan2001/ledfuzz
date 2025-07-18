@@ -1,0 +1,85 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in php_ifd_get32u exif.c:1450:22
+Bug Call Trace:
+    ==3817==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60b0000016a5 at pc 0x0000007895ea bp 0x7ffeb5039cd0 sp 0x7ffeb5039cc8
+    READ of size 1 at 0x60b0000016a5 thread T0
+        #0 0x7895e9 in php_ifd_get32u /magma/targets/php/repo/ext/exif/exif.c:1450:22
+        #1 0x7895e9 in exif_process_IFD_TAG_impl /magma/targets/php/repo/ext/exif/exif.c:3293:15
+        #2 0x783784 in exif_process_IFD_TAG /magma/targets/php/repo/ext/exif/exif.c:3614:11
+        #3 0x78883a in exif_process_IFD_in_MAKERNOTE /magma/targets/php/repo/ext/exif/exif.c:3254:8
+        #4 0x78883a in exif_process_IFD_TAG_impl /magma/targets/php/repo/ext/exif/exif.c:3542:10
+        #5 0x783784 in exif_process_IFD_TAG /magma/targets/php/repo/ext/exif/exif.c:3614:11
+        #6 0x780918 in exif_process_IFD_in_TIFF_impl /magma/targets/php/repo/ext/exif/exif.c:4278:12
+        #7 0x780918 in exif_process_IFD_in_TIFF /magma/targets/php/repo/ext/exif/exif.c:4337:11
+        #8 0x773acb in exif_scan_FILE_header /magma/targets/php/repo/ext/exif/exif.c:4374:9
+        #9 0x773acb in exif_read_from_impl /magma/targets/php/repo/ext/exif/exif.c:4499:8
+        #10 0x773acb in exif_read_from_stream /magma/targets/php/repo/ext/exif/exif.c:4515:8
+        #11 0x768f88 in zif_exif_read_data /magma/targets/php/repo/ext/exif/exif.c:4604:9
+        #12 0x12258ce in zend_call_function /magma/targets/php/repo/Zend/zend_execute_API.c:911:4
+        #13 0x1221d7f in _call_user_function_impl /magma/targets/php/repo/Zend/zend_execute_API.c:659:9
+        #14 0x17c9315 in fuzzer_call_php_func_zval /magma/targets/php/repo/sapi/fuzzer/fuzzer-sapi.c:278:2
+        #15 0x17c7e09 in LLVMFuzzerTestOneInput /magma/targets/php/repo/sapi/fuzzer/fuzzer-exif.c:52:2
+        #16 0x17cbab3 in main /magma/fuzzers/afl_asan/repo/afl_driver.cpp:201:7
+        #17 0x7fc60cdbac86 in __libc_start_main /build/glibc-CVJwZb/glibc-2.27/csu/../csu/libc-start.c:310
+        #18 0x44c439 in _start (/magma_out/exif+0x44c439)
+
+    0x60b0000016a5 is located 0 bytes to the right of 101-byte region [0x60b000001640,0x60b0000016a5)
+    allocated by thread T0 here:
+        #0 0x4c433d in malloc (/magma_out/exif+0x4c433d)
+        #1 0x116ff40 in __zend_malloc /magma/targets/php/repo/Zend/zend_alloc.c:3030:14
+
+    SUMMARY: AddressSanitizer: heap-buffer-overflow /magma/targets/php/repo/ext/exif/exif.c:1450:22 in php_ifd_get32u
+    Shadow bytes around the buggy address:
+    0x0c167fff8280: fa fa fa fa fa fa 00 00 00 00 00 00 00 00 00 00
+    0x0c167fff8290: 00 00 00 00 fa fa fa fa fa fa fa fa 00 00 00 00
+    0x0c167fff82a0: 00 00 00 00 00 00 00 00 00 00 fa fa fa fa fa fa
+    0x0c167fff82b0: fa fa fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+    0x0c167fff82c0: fa fa fa fa fa fa fa fa 00 00 00 00 00 00 00 00
+    =>0x0c167fff82d0: 00 00 00 00[05]fa fa fa fa fa fa fa fa fa fa fa
+    0x0c167fff82e0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c167fff82f0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c167fff8300: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c167fff8310: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c167fff8320: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    Shadow byte legend (one shadow byte represents 8 application bytes):
+    Addressable:           00
+    Partially addressable: 01 02 03 04 05 06 07 
+    Heap left redzone:       fa
+    Freed heap region:       fd
+    Stack left redzone:      f1
+    Stack mid redzone:       f2
+    Stack right redzone:     f3
+    Stack after return:      f5
+    Stack use after scope:   f8
+    Global redzone:          f9
+    Global init order:       f6
+    Poisoned by user:        f7
+    Container overflow:      fc
+    Array cookie:            ac
+    Intra object redzone:    bb
+    ASan internal:           fe
+    Left alloca redzone:     ca
+    Right alloca redzone:    cb
+    Shadow gap:              cc
+    ==3817==ABORTING
+
+Patch:
+    diff --git a/ext/exif/exif.c b/ext/exif/exif.c
+    index 8606bdd926..1a7abce6d9 100644
+    --- a/ext/exif/exif.c
+    +++ b/ext/exif/exif.c
+    @@ ... @@ static int exif_process_IFD_in_MAKERNOTE(image_info_type *ImageInfo, char * valu
+            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Illegal IFD size: 2 + 0x%04X*12 = 0x%04X > 0x%04X", NumDirEntries, 2+NumDirEntries*12, value_len);
+            return false;
+        }
+    +
+    +	#ifdef MAGMA_ENABLE_FIXES
+        if ((dir_start - value_ptr) > value_len - (2+NumDirEntries*12)) {
+            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Illegal IFD size: 0x%04X > 0x%04X", (dir_start - value_ptr) + (2+NumDirEntries*12), value_len);
+            return false;
+        }
+    +	#else
+    +	#endif
+    
+        for (de=0;de<NumDirEntries;de++) {
+            size_t offset = 2 + 12 * de;

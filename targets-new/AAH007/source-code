@@ -1,0 +1,270 @@
+In png.c:
+470 void PNGAPI
+471 png_free_data(png_const_structrp png_ptr, png_inforp info_ptr, png_uint_32 mask,
+472     int num)
+473 {
+474    png_debug(1, "in png_free_data");
+475 
+476    if (png_ptr == NULL || info_ptr == NULL)
+477       return;
+478 
+479 #ifdef PNG_TEXT_SUPPORTED
+480    /* Free text item num or (if num == -1) all text items */
+481    if (info_ptr->text != NULL &&
+482        ((mask & PNG_FREE_TEXT) & info_ptr->free_me) != 0)
+483    {
+484       if (num != -1)
+485       {
+486          png_free(png_ptr, info_ptr->text[num].key);
+487          info_ptr->text[num].key = NULL;
+488       }
+489 
+490       else
+491       {
+492          int i;
+493 
+494          for (i = 0; i < info_ptr->num_text; i++)
+495             png_free(png_ptr, info_ptr->text[i].key);
+496 
+497          png_free(png_ptr, info_ptr->text);
+498          info_ptr->text = NULL;
+499          info_ptr->num_text = 0;
+500          info_ptr->max_text = 0;
+501       }
+502    }
+503 #endif
+504 
+505 #ifdef PNG_tRNS_SUPPORTED
+506    /* Free any tRNS entry */
+507    if (((mask & PNG_FREE_TRNS) & info_ptr->free_me) != 0)
+508    {
+509       info_ptr->valid &= ~PNG_INFO_tRNS;
+510       png_free(png_ptr, info_ptr->trans_alpha);
+511       info_ptr->trans_alpha = NULL;
+512       info_ptr->num_trans = 0;
+513    }
+514 #endif
+515 
+516 #ifdef PNG_sCAL_SUPPORTED
+517    /* Free any sCAL entry */
+518    if (((mask & PNG_FREE_SCAL) & info_ptr->free_me) != 0)
+519    {
+520       png_free(png_ptr, info_ptr->scal_s_width);
+521       png_free(png_ptr, info_ptr->scal_s_height);
+522       info_ptr->scal_s_width = NULL;
+523       info_ptr->scal_s_height = NULL;
+524       info_ptr->valid &= ~PNG_INFO_sCAL;
+525    }
+526 #endif
+527 
+528 #ifdef PNG_pCAL_SUPPORTED
+529    /* Free any pCAL entry */
+530    if (((mask & PNG_FREE_PCAL) & info_ptr->free_me) != 0)
+531    {
+532       png_free(png_ptr, info_ptr->pcal_purpose);
+533       png_free(png_ptr, info_ptr->pcal_units);
+534       info_ptr->pcal_purpose = NULL;
+535       info_ptr->pcal_units = NULL;
+536 
+537       if (info_ptr->pcal_params != NULL)
+538          {
+539             int i;
+540 
+541             for (i = 0; i < info_ptr->pcal_nparams; i++)
+542                png_free(png_ptr, info_ptr->pcal_params[i]);
+543 
+544             png_free(png_ptr, info_ptr->pcal_params);
+545             info_ptr->pcal_params = NULL;
+546          }
+547       info_ptr->valid &= ~PNG_INFO_pCAL;
+548    }
+549 #endif
+550 
+551 #ifdef PNG_iCCP_SUPPORTED
+552    /* Free any profile entry */
+553    if (((mask & PNG_FREE_ICCP) & info_ptr->free_me) != 0)
+554    {
+555       png_free(png_ptr, info_ptr->iccp_name);
+556       png_free(png_ptr, info_ptr->iccp_profile);
+557       info_ptr->iccp_name = NULL;
+558       info_ptr->iccp_profile = NULL;
+559       info_ptr->valid &= ~PNG_INFO_iCCP;
+560    }
+561 #endif
+562 
+563 #ifdef PNG_sPLT_SUPPORTED
+564    /* Free a given sPLT entry, or (if num == -1) all sPLT entries */
+565    if (info_ptr->splt_palettes != NULL &&
+566        ((mask & PNG_FREE_SPLT) & info_ptr->free_me) != 0)
+567    {
+568       if (num != -1)
+569       {
+570          png_free(png_ptr, info_ptr->splt_palettes[num].name);
+571          png_free(png_ptr, info_ptr->splt_palettes[num].entries);
+572          info_ptr->splt_palettes[num].name = NULL;
+573          info_ptr->splt_palettes[num].entries = NULL;
+574       }
+575 
+576       else
+577       {
+578          int i;
+579 
+580          for (i = 0; i < info_ptr->splt_palettes_num; i++)
+581          {
+582             png_free(png_ptr, info_ptr->splt_palettes[i].name);
+583             png_free(png_ptr, info_ptr->splt_palettes[i].entries);
+584          }
+585 
+586          png_free(png_ptr, info_ptr->splt_palettes);
+587          info_ptr->splt_palettes = NULL;
+588          info_ptr->splt_palettes_num = 0;
+589          info_ptr->valid &= ~PNG_INFO_sPLT;
+590       }
+591    }
+592 #endif
+593 
+594 #ifdef PNG_STORE_UNKNOWN_CHUNKS_SUPPORTED
+595    if (info_ptr->unknown_chunks != NULL &&
+596        ((mask & PNG_FREE_UNKN) & info_ptr->free_me) != 0)
+597    {
+598       if (num != -1)
+599       {
+600           png_free(png_ptr, info_ptr->unknown_chunks[num].data);
+601           info_ptr->unknown_chunks[num].data = NULL;
+602       }
+603 
+604       else
+605       {
+606          int i;
+607 
+608          for (i = 0; i < info_ptr->unknown_chunks_num; i++)
+609             png_free(png_ptr, info_ptr->unknown_chunks[i].data);
+610 
+611          png_free(png_ptr, info_ptr->unknown_chunks);
+612          info_ptr->unknown_chunks = NULL;
+613          info_ptr->unknown_chunks_num = 0;
+614       }
+615    }
+616 #endif
+617 
+618 #ifdef PNG_eXIf_SUPPORTED
+619    /* Free any eXIf entry */
+620    if (((mask & PNG_FREE_EXIF) & info_ptr->free_me) != 0)
+621    {
+622 # ifdef PNG_READ_eXIf_SUPPORTED
+623       if (info_ptr->eXIf_buf)
+624       {
+625          png_free(png_ptr, info_ptr->eXIf_buf);
+626          info_ptr->eXIf_buf = NULL;
+627       }
+628 # endif
+629       if (info_ptr->exif)
+630       {
+631          png_free(png_ptr, info_ptr->exif);
+632          info_ptr->exif = NULL;
+633       }
+634       info_ptr->valid &= ~PNG_INFO_eXIf;
+635    }
+636 #endif
+637 
+638 #ifdef PNG_hIST_SUPPORTED
+639    /* Free any hIST entry */
+640    if (((mask & PNG_FREE_HIST) & info_ptr->free_me) != 0)
+641    {
+642       png_free(png_ptr, info_ptr->hist);
+643       info_ptr->hist = NULL;
+644       info_ptr->valid &= ~PNG_INFO_hIST;
+645    }
+646 #endif
+647 
+648    /* Free any PLTE entry that was internally allocated */
+649    if (((mask & PNG_FREE_PLTE) & info_ptr->free_me) != 0)
+650    {
+651       png_free(png_ptr, info_ptr->palette);
+652       info_ptr->palette = NULL;
+653       info_ptr->valid &= ~PNG_INFO_PLTE;
+654       info_ptr->num_palette = 0;
+655    }
+656 
+657 #ifdef PNG_INFO_IMAGE_SUPPORTED
+658    /* Free any image bits attached to the info structure */
+659    if (((mask & PNG_FREE_ROWS) & info_ptr->free_me) != 0)
+660    {
+661       if (info_ptr->row_pointers != NULL)
+662       {
+663          png_uint_32 row;
+664          for (row = 0; row < info_ptr->height; row++)
+665             png_free(png_ptr, info_ptr->row_pointers[row]);
+666 
+667          png_free(png_ptr, info_ptr->row_pointers);
+668          info_ptr->row_pointers = NULL;
+669       }
+670       info_ptr->valid &= ~PNG_INFO_IDAT;
+671    }
+672 #endif
+673 
+674    if (num != -1)
+675       mask &= ~PNG_FREE_MUL;
+676 
+677    info_ptr->free_me &= ~mask;
+678 }
+
+In pngrutil.c:
+2043 #ifdef PNG_READ_eXIf_SUPPORTED
+2044 void /* PRIVATE */
+2045 png_handle_eXIf(png_structrp png_ptr, png_inforp info_ptr, png_uint_32 length)
+2046 {
+2047    unsigned int i;
+2048 
+2049    png_debug(1, "in png_handle_eXIf");
+2050 
+2051    if ((png_ptr->mode & PNG_HAVE_IHDR) == 0)
+2052       png_chunk_error(png_ptr, "missing IHDR");
+2053 
+2054    if (length < 2)
+2055    {
+2056       png_crc_finish(png_ptr, length);
+2057       png_chunk_benign_error(png_ptr, "too short");
+2058       return;
+2059    }
+2060 
+2061    else if (info_ptr == NULL || (info_ptr->valid & PNG_INFO_eXIf) != 0)
+2062    {
+2063       png_crc_finish(png_ptr, length);
+2064       png_chunk_benign_error(png_ptr, "duplicate");
+2065       return;
+2066    }
+2067 
+2068    info_ptr->eXIf_buf = png_voidcast(png_bytep,
+2069              png_malloc_warn(png_ptr, length));
+2070 
+2071    if (info_ptr->eXIf_buf == NULL)
+2072    {
+2073       png_crc_finish(png_ptr, length);
+2074       png_chunk_benign_error(png_ptr, "out of memory");
+2075       return;
+2076    }
+2077 
+2078    for (i = 0; i < length; i++)
+2079    {
+2080       png_byte buf[1];
+2081       png_crc_read(png_ptr, buf, 1);
+2082       info_ptr->eXIf_buf[i] = buf[0];
+2083       if (i == 1 && buf[0] != 'M' && buf[0] != 'I'
+2084                  && info_ptr->eXIf_buf[0] != buf[0])
+2085       {
+2086          png_crc_finish(png_ptr, length);
+2087          png_chunk_benign_error(png_ptr, "incorrect byte-order specifier");
+2088          png_free(png_ptr, info_ptr->eXIf_buf);
+2089          info_ptr->eXIf_buf = NULL;
+2090          return;
+2091       }
+2092    }
+2093 
+2094    if (png_crc_finish(png_ptr, 0) == 0)
+2095       png_set_eXIf_1(png_ptr, info_ptr, length, info_ptr->eXIf_buf);
+2096 
+2097    png_free(png_ptr, info_ptr->eXIf_buf);
+2098    info_ptr->eXIf_buf = NULL;
+2099 }
+2100 #endif

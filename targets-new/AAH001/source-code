@@ -1,0 +1,43 @@
+In pngrutil.c:
+
+3158 void /* PRIVATE */
+3159 png_check_chunk_length(png_const_structrp png_ptr, png_uint_32 length)
+3160 {
+3161    png_alloc_size_t limit = PNG_UINT_31_MAX;
+3162 
+3163 # ifdef PNG_SET_USER_LIMITS_SUPPORTED
+3164    if (png_ptr->user_chunk_malloc_max > 0 &&
+3165        png_ptr->user_chunk_malloc_max < limit)
+3166       limit = png_ptr->user_chunk_malloc_max;
+3167 # elif PNG_USER_CHUNK_MALLOC_MAX > 0
+3168    if (PNG_USER_CHUNK_MALLOC_MAX < limit)
+3169       limit = PNG_USER_CHUNK_MALLOC_MAX;
+3170 # endif
+3171    if (png_ptr->chunk_name == png_IDAT)
+3172    {
+3173       png_alloc_size_t idat_limit = PNG_UINT_31_MAX;
+3174       size_t row_factor_l =
+3175          (size_t)png_ptr->width
+3176          * (size_t)png_ptr->channels
+3177          * (png_ptr->bit_depth > 8? 2: 1)
+3178          + 1
+3179          + (png_ptr->interlaced? 6: 0);
+3180 
+3181       size_t row_factor = (png_uint_32)row_factor_l;
+3182       if (png_ptr->height > PNG_UINT_32_MAX/row_factor)
+3183          idat_limit = PNG_UINT_31_MAX;
+3184       else
+3185          idat_limit = png_ptr->height * row_factor;
+3186       row_factor = row_factor > 32566? 32566 : row_factor;
+3187       idat_limit += 6 + 5*(idat_limit/row_factor+1); /* zlib+deflate overhead */
+3188       idat_limit=idat_limit < PNG_UINT_31_MAX? idat_limit : PNG_UINT_31_MAX;
+3189       limit = limit < idat_limit? idat_limit : limit;
+3190    }
+3191 
+3192    if (length > limit)
+3193    {
+3194       png_debug2(0," length = %lu, limit = %lu",
+3195          (unsigned long)length,(unsigned long)limit);
+3196       png_chunk_error(png_ptr, "chunk data is too large");
+3197    }
+3198 }

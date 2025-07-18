@@ -1,0 +1,84 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): line 2064 in tif_dirwrite.c
+Bug Call Trace:
+    ==916330==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x603000000120 at pc 0x000000493a9a bp 0x7ffd1cab8380 sp 0x7ffd1cab7b48
+    READ of size 512 at 0x603000000120 thread T0
+        #0 0x493a99 in __asan_memcpy (/magma_out/tiffcp+0x493a99)
+        #1 0x56397a in _TIFFmemcpy /magma/targets/libtiff/repo/libtiff/tif_unix.c:346:2
+        #2 0x530796 in TIFFWriteDirectoryTagColormap /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c:2064:2
+        #3 0x530796 in TIFFWriteDirectorySec /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c:626:10
+        #4 0x53c47e in TIFFRewriteDirectory /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c
+        #5 0x547daa in TIFFFlush /magma/targets/libtiff/repo/libtiff/tif_flush.c:53:13
+        #6 0x4d83a3 in TIFFCleanup /magma/targets/libtiff/repo/libtiff/tif_close.c:51:3
+        #7 0x4d8d68 in TIFFClose /magma/targets/libtiff/repo/libtiff/tif_close.c:126:2
+        #8 0x4c8713 in main /magma/targets/libtiff/repo/tools/tiffcp.c
+        #9 0x7f11bae5cc86 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x21c86)
+        #10 0x41c759 in _start (/magma_out/tiffcp+0x41c759)
+
+    0x603000000120 is located 0 bytes to the right of 32-byte region [0x603000000100,0x603000000120)
+    allocated by thread T0 here:
+        #0 0x49465d in malloc (/magma_out/tiffcp+0x49465d)
+        #1 0x5637d4 in _TIFFmalloc /magma/targets/libtiff/repo/libtiff/tif_unix.c:314:10
+
+    SUMMARY: AddressSanitizer: heap-buffer-overflow (/magma_out/tiffcp+0x493a99) in __asan_memcpy
+    Shadow bytes around the buggy address:
+    0x0c067fff7fd0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x0c067fff7fe0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x0c067fff7ff0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x0c067fff8000: fa fa fd fd fd fd fa fa fd fd fd fa fa fa fd fd
+    0x0c067fff8010: fd fd fa fa fd fd fd fd fa fa fd fd fd fd fa fa
+    =>0x0c067fff8020: 00 00 00 00[fa]fa 00 00 00 00 fa fa 00 00 00 00
+    0x0c067fff8030: fa fa 00 00 00 fa fa fa fd fd fd fa fa fa fa fa
+    0x0c067fff8040: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c067fff8050: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c067fff8060: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    0x0c067fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+    Shadow byte legend (one shadow byte represents 8 application bytes):
+    Addressable:           00
+    Partially addressable: 01 02 03 04 05 06 07 
+    Heap left redzone:       fa
+    Freed heap region:       fd
+    Stack left redzone:      f1
+    Stack mid redzone:       f2
+    Stack right redzone:     f3
+    Stack after return:      f5
+    Stack use after scope:   f8
+    Global redzone:          f9
+    Global init order:       f6
+    Poisoned by user:        f7
+    Container overflow:      fc
+    Array cookie:            ac
+    Intra object redzone:    bb
+    ASan internal:           fe
+    Left alloca redzone:     ca
+    Right alloca redzone:    cb
+    Shadow gap:              cc
+    ==916330==ABORTING
+
+Patch:
+    diff --git a/libtiff/tif_pixarlog.c b/libtiff/tif_pixarlog.c
+    index b1e48d9..1c14581 100644
+    --- a/libtiff/tif_pixarlog.c
+    +++ b/libtiff/tif_pixarlog.c
+    @@ -1265,8 +1265,10 @@ PixarLogClose(TIFF* tif)
+        * readers that don't know about PixarLog, or how to set
+        * the PIXARLOGDATFMT pseudo-tag.
+        */
+    -
+    -        if (sp->state&PLSTATE_INIT) {
+    +#ifdef FIX
+    +        if (sp->state&PLSTATE_INIT)
+    +#endif
+    +        {
+                /* We test the state to avoid an issue such as in
+                * http://bugzilla.maptools.org/show_bug.cgi?id=2604
+                * What appends in that case is that the bitspersample is 1 and
+                * a TransferFunction is set. The size of the TransferFunction
+                * depends on 1<<bitspersample. So if we increase it, an access
+                * out of the buffer will happen at directory flushing.
+                * Another option would be to clear those targs. 
+                */
+                td->td_bitspersample = 8;
+                td->td_sampleformat = SAMPLEFORMAT_UINT;
+            }
+    }

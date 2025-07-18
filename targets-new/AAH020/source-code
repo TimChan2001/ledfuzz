@@ -1,0 +1,618 @@
+In tif_dir.c:
+175 static int
+176 _TIFFVSetField(TIFF* tif, uint32 tag, va_list ap)
+177 {
+178     static const char module[] = "_TIFFVSetField";
+179 
+180     TIFFDirectory* td = &tif->tif_dir;
+181     int status = 1;
+182     uint32 v32, i, v;
+183     double dblval;
+184     char* s;
+185     const TIFFField *fip = TIFFFindField(tif, tag, TIFF_ANY);
+186     uint32 standard_tag = tag;
+187     if( fip == NULL ) /* cannot happen since OkToChangeTag() already checks it */
+188         return 0;
+189     /*
+190      * We want to force the custom code to be used for custom
+191      * fields even if the tag happens to match a well known 
+192      * one - important for reinterpreted handling of standard
+193      * tag values in custom directories (i.e. EXIF) 
+194      */
+195     if (fip->field_bit == FIELD_CUSTOM) {
+196             standard_tag = 0;
+197     }
+198 
+199     switch (standard_tag) {
+200     case TIFFTAG_SUBFILETYPE:
+201             td->td_subfiletype = (uint32) va_arg(ap, uint32);
+202             break;
+203     case TIFFTAG_IMAGEWIDTH:
+204             td->td_imagewidth = (uint32) va_arg(ap, uint32);
+205             break;
+206     case TIFFTAG_IMAGELENGTH:
+207             td->td_imagelength = (uint32) va_arg(ap, uint32);
+208             break;
+209     case TIFFTAG_BITSPERSAMPLE:
+210             td->td_bitspersample = (uint16) va_arg(ap, uint16_vap);
+211             /*
+212              * If the data require post-decoding processing to byte-swap
+213              * samples, set it up here.  Note that since tags are required
+214              * to be ordered, compression code can override this behavior
+215              * in the setup method if it wants to roll the post decoding
+216              * work in with its normal work.
+217              */
+218             if (tif->tif_flags & TIFF_SWAB) {
+219                     if (td->td_bitspersample == 8)
+220                             tif->tif_postdecode = _TIFFNoPostDecode;
+221                     else if (td->td_bitspersample == 16)
+222                             tif->tif_postdecode = _TIFFSwab16BitData;
+223                     else if (td->td_bitspersample == 24)
+224                             tif->tif_postdecode = _TIFFSwab24BitData;
+225                     else if (td->td_bitspersample == 32)
+226                             tif->tif_postdecode = _TIFFSwab32BitData;
+227                     else if (td->td_bitspersample == 64)
+228                             tif->tif_postdecode = _TIFFSwab64BitData;
+229                     else if (td->td_bitspersample == 128) /* two 64's */
+230                             tif->tif_postdecode = _TIFFSwab64BitData;
+231             }
+232             break;
+233     case TIFFTAG_COMPRESSION:
+234             v = (uint16) va_arg(ap, uint16_vap);
+235             /*
+236              * If we're changing the compression scheme, the notify the
+237              * previous module so that it can cleanup any state it's
+238              * setup.
+239              */
+240             if (TIFFFieldSet(tif, FIELD_COMPRESSION)) {
+241                     if ((uint32)td->td_compression == v)
+242                             break;
+243                     (*tif->tif_cleanup)(tif);
+244                     tif->tif_flags &= ~TIFF_CODERSETUP;
+245             }
+246             /*
+247              * Setup new compression routine state.
+248              */
+249             if( (status = TIFFSetCompressionScheme(tif, v)) != 0 )
+250                 td->td_compression = (uint16) v;
+251             else
+252                 status = 0;
+253             break;
+254     case TIFFTAG_PHOTOMETRIC:
+255             td->td_photometric = (uint16) va_arg(ap, uint16_vap);
+256             break;
+257     case TIFFTAG_THRESHHOLDING:
+258             td->td_threshholding = (uint16) va_arg(ap, uint16_vap);
+259             break;
+260     case TIFFTAG_FILLORDER:
+261             v = (uint16) va_arg(ap, uint16_vap);
+262             if (v != FILLORDER_LSB2MSB && v != FILLORDER_MSB2LSB)
+263                     goto badvalue;
+264             td->td_fillorder = (uint16) v;
+265             break;
+266     case TIFFTAG_ORIENTATION:
+267             v = (uint16) va_arg(ap, uint16_vap);
+268             if (v < ORIENTATION_TOPLEFT || ORIENTATION_LEFTBOT < v)
+269                     goto badvalue;
+270             else
+271                     td->td_orientation = (uint16) v;
+272             break;
+273     case TIFFTAG_SAMPLESPERPIXEL:
+274             v = (uint16) va_arg(ap, uint16_vap);
+275             if (v == 0)
+276                     goto badvalue;
+277         if( v != td->td_samplesperpixel )
+278         {
+279 #ifdef MAGMA_ENABLE_FIXES
+280             /* See http://bugzilla.maptools.org/show_bug.cgi?id=2500 */
+281             if( td->td_sminsamplevalue != NULL )
+282             {
+283                 TIFFWarningExt(tif->tif_clientdata,module,
+284                     "SamplesPerPixel tag value is changing, "
+285                     "but SMinSampleValue tag was read with a different value. Canceling it");
+286                 TIFFClrFieldBit(tif,FIELD_SMINSAMPLEVALUE);
+287                 _TIFFfree(td->td_sminsamplevalue);
+288                 td->td_sminsamplevalue = NULL;
+289             }
+290             if( td->td_smaxsamplevalue != NULL )
+291             {
+292                 TIFFWarningExt(tif->tif_clientdata,module,
+293                     "SamplesPerPixel tag value is changing, "
+294                     "but SMaxSampleValue tag was read with a different value. Canceling it");
+295                 TIFFClrFieldBit(tif,FIELD_SMAXSAMPLEVALUE);
+296                 _TIFFfree(td->td_smaxsamplevalue);
+297                 td->td_smaxsamplevalue = NULL;
+298             }
+299             /* Test if 3 transfer functions instead of just one are now needed
+300                See http://bugzilla.maptools.org/show_bug.cgi?id=2820 */
+301             if( td->td_transferfunction[0] != NULL && (v - td->td_extrasamples > 1) &&
+302                 !(td->td_samplesperpixel - td->td_extrasamples > 1))
+303             {
+304                     TIFFWarningExt(tif->tif_clientdata,module,
+305                         "SamplesPerPixel tag value is changing, "
+306                         "but TransferFunction was read with a different value. Canceling it");
+307                     TIFFClrFieldBit(tif,FIELD_TRANSFERFUNCTION);
+308                     _TIFFfree(td->td_transferfunction[0]);
+309                     td->td_transferfunction[0] = NULL;
+310             }
+311 #endif
+312         }
+313             td->td_samplesperpixel = (uint16) v;
+314             break;
+315     case TIFFTAG_ROWSPERSTRIP:
+316             v32 = (uint32) va_arg(ap, uint32);
+317             if (v32 == 0)
+318                     goto badvalue32;
+319             td->td_rowsperstrip = v32;
+320             if (!TIFFFieldSet(tif, FIELD_TILEDIMENSIONS)) {
+321                     td->td_tilelength = v32;
+322                     td->td_tilewidth = td->td_imagewidth;
+323             }
+324             break;
+325     case TIFFTAG_MINSAMPLEVALUE:
+326             td->td_minsamplevalue = (uint16) va_arg(ap, uint16_vap);
+327             break;
+328     case TIFFTAG_MAXSAMPLEVALUE:
+329             td->td_maxsamplevalue = (uint16) va_arg(ap, uint16_vap);
+330             break;
+331     case TIFFTAG_SMINSAMPLEVALUE:
+332             if (tif->tif_flags & TIFF_PERSAMPLE)
+333                     _TIFFsetDoubleArray(&td->td_sminsamplevalue, va_arg(ap, double*), td->td_samplesperpixel);
+334             else
+335                     setDoubleArrayOneValue(&td->td_sminsamplevalue, va_arg(ap, double), td->td_samplesperpixel);
+336             break;
+337     case TIFFTAG_SMAXSAMPLEVALUE:
+338             if (tif->tif_flags & TIFF_PERSAMPLE)
+339                     _TIFFsetDoubleArray(&td->td_smaxsamplevalue, va_arg(ap, double*), td->td_samplesperpixel);
+340             else
+341                     setDoubleArrayOneValue(&td->td_smaxsamplevalue, va_arg(ap, double), td->td_samplesperpixel);
+342             break;
+343     case TIFFTAG_XRESOLUTION:
+344         dblval = va_arg(ap, double);
+345         if( dblval < 0 )
+346             goto badvaluedouble;
+347             td->td_xresolution = _TIFFClampDoubleToFloat( dblval );
+348             break;
+349     case TIFFTAG_YRESOLUTION:
+350         dblval = va_arg(ap, double);
+351         if( dblval < 0 )
+352             goto badvaluedouble;
+353             td->td_yresolution = _TIFFClampDoubleToFloat( dblval );
+354             break;
+355     case TIFFTAG_PLANARCONFIG:
+356             v = (uint16) va_arg(ap, uint16_vap);
+357             if (v != PLANARCONFIG_CONTIG && v != PLANARCONFIG_SEPARATE)
+358                     goto badvalue;
+359             td->td_planarconfig = (uint16) v;
+360             break;
+361     case TIFFTAG_XPOSITION:
+362             td->td_xposition = _TIFFClampDoubleToFloat( va_arg(ap, double) );
+363             break;
+364     case TIFFTAG_YPOSITION:
+365             td->td_yposition = _TIFFClampDoubleToFloat( va_arg(ap, double) );
+366             break;
+367     case TIFFTAG_RESOLUTIONUNIT:
+368             v = (uint16) va_arg(ap, uint16_vap);
+369             if (v < RESUNIT_NONE || RESUNIT_CENTIMETER < v)
+370                     goto badvalue;
+371             td->td_resolutionunit = (uint16) v;
+372             break;
+373     case TIFFTAG_PAGENUMBER:
+374             td->td_pagenumber[0] = (uint16) va_arg(ap, uint16_vap);
+375             td->td_pagenumber[1] = (uint16) va_arg(ap, uint16_vap);
+376             break;
+377     case TIFFTAG_HALFTONEHINTS:
+378             td->td_halftonehints[0] = (uint16) va_arg(ap, uint16_vap);
+379             td->td_halftonehints[1] = (uint16) va_arg(ap, uint16_vap);
+380             break;
+381     case TIFFTAG_COLORMAP:
+382             v32 = (uint32)(1L<<td->td_bitspersample);
+383             _TIFFsetShortArray(&td->td_colormap[0], va_arg(ap, uint16*), v32);
+384             _TIFFsetShortArray(&td->td_colormap[1], va_arg(ap, uint16*), v32);
+385             _TIFFsetShortArray(&td->td_colormap[2], va_arg(ap, uint16*), v32);
+386             break;
+387     case TIFFTAG_EXTRASAMPLES:
+388             if (!setExtraSamples(tif, ap, &v))
+389                     goto badvalue;
+390             break;
+391     case TIFFTAG_MATTEING:
+392             td->td_extrasamples =  (((uint16) va_arg(ap, uint16_vap)) != 0);
+393             if (td->td_extrasamples) {
+394                     uint16 sv = EXTRASAMPLE_ASSOCALPHA;
+395                     _TIFFsetShortArray(&td->td_sampleinfo, &sv, 1);
+396             }
+397             break;
+398     case TIFFTAG_TILEWIDTH:
+399             v32 = (uint32) va_arg(ap, uint32);
+400             if (v32 % 16) {
+401                     if (tif->tif_mode != O_RDONLY)
+402                             goto badvalue32;
+403                     TIFFWarningExt(tif->tif_clientdata, tif->tif_name,
+404                             "Nonstandard tile width %d, convert file", v32);
+405             }
+406             td->td_tilewidth = v32;
+407             tif->tif_flags |= TIFF_ISTILED;
+408             break;
+409     case TIFFTAG_TILELENGTH:
+410             v32 = (uint32) va_arg(ap, uint32);
+411             if (v32 % 16) {
+412                     if (tif->tif_mode != O_RDONLY)
+413                             goto badvalue32;
+414                     TIFFWarningExt(tif->tif_clientdata, tif->tif_name,
+415                         "Nonstandard tile length %d, convert file", v32);
+416             }
+417             td->td_tilelength = v32;
+418             tif->tif_flags |= TIFF_ISTILED;
+419             break;
+420     case TIFFTAG_TILEDEPTH:
+421             v32 = (uint32) va_arg(ap, uint32);
+422             if (v32 == 0)
+423                     goto badvalue32;
+424             td->td_tiledepth = v32;
+425             break;
+426     case TIFFTAG_DATATYPE:
+427             v = (uint16) va_arg(ap, uint16_vap);
+428             switch (v) {
+429             case DATATYPE_VOID:     v = SAMPLEFORMAT_VOID;  break;
+430             case DATATYPE_INT:      v = SAMPLEFORMAT_INT;   break;
+431             case DATATYPE_UINT:     v = SAMPLEFORMAT_UINT;  break;
+432             case DATATYPE_IEEEFP:   v = SAMPLEFORMAT_IEEEFP;break;
+433             default:                goto badvalue;
+434             }
+435             td->td_sampleformat = (uint16) v;
+436             break;
+437     case TIFFTAG_SAMPLEFORMAT:
+438             v = (uint16) va_arg(ap, uint16_vap);
+439             if (v < SAMPLEFORMAT_UINT || SAMPLEFORMAT_COMPLEXIEEEFP < v)
+440                     goto badvalue;
+441             td->td_sampleformat = (uint16) v;
+442 
+443             /*  Try to fix up the SWAB function for complex data. */
+444             if( td->td_sampleformat == SAMPLEFORMAT_COMPLEXINT
+445                 && td->td_bitspersample == 32
+446                 && tif->tif_postdecode == _TIFFSwab32BitData )
+447                 tif->tif_postdecode = _TIFFSwab16BitData;
+448             else if( (td->td_sampleformat == SAMPLEFORMAT_COMPLEXINT
+449                       || td->td_sampleformat == SAMPLEFORMAT_COMPLEXIEEEFP)
+450                      && td->td_bitspersample == 64
+451                      && tif->tif_postdecode == _TIFFSwab64BitData )
+452                 tif->tif_postdecode = _TIFFSwab32BitData;
+453             break;
+454     case TIFFTAG_IMAGEDEPTH:
+455             td->td_imagedepth = (uint32) va_arg(ap, uint32);
+456             break;
+457     case TIFFTAG_SUBIFD:
+458             if ((tif->tif_flags & TIFF_INSUBIFD) == 0) {
+459                     td->td_nsubifd = (uint16) va_arg(ap, uint16_vap);
+460                     _TIFFsetLong8Array(&td->td_subifd, (uint64*) va_arg(ap, uint64*),
+461                         (uint32) td->td_nsubifd);
+462             } else {
+463                     TIFFErrorExt(tif->tif_clientdata, module,
+464                                  "%s: Sorry, cannot nest SubIFDs",
+465                                  tif->tif_name);
+466                     status = 0;
+467             }
+468             break;
+469     case TIFFTAG_YCBCRPOSITIONING:
+470             td->td_ycbcrpositioning = (uint16) va_arg(ap, uint16_vap);
+471             break;
+472     case TIFFTAG_YCBCRSUBSAMPLING:
+473             td->td_ycbcrsubsampling[0] = (uint16) va_arg(ap, uint16_vap);
+474             td->td_ycbcrsubsampling[1] = (uint16) va_arg(ap, uint16_vap);
+475             break;
+476     case TIFFTAG_TRANSFERFUNCTION:
+477             v = (td->td_samplesperpixel - td->td_extrasamples) > 1 ? 3 : 1;
+478             for (i = 0; i < v; i++)
+479                     _TIFFsetShortArray(&td->td_transferfunction[i],
+480                         va_arg(ap, uint16*), 1U<<td->td_bitspersample);
+481             break;
+482     case TIFFTAG_REFERENCEBLACKWHITE:
+483             /* XXX should check for null range */
+484             _TIFFsetFloatArray(&td->td_refblackwhite, va_arg(ap, float*), 6);
+485             break;
+486     case TIFFTAG_INKNAMES:
+487             v = (uint16) va_arg(ap, uint16_vap);
+488             s = va_arg(ap, char*);
+489             v = checkInkNamesString(tif, v, s);
+490             status = v > 0;
+491             if( v > 0 ) {
+492                     _TIFFsetNString(&td->td_inknames, s, v);
+493                     td->td_inknameslen = v;
+494             }
+495             break;
+496     case TIFFTAG_PERSAMPLE:
+497             v = (uint16) va_arg(ap, uint16_vap);
+498             if( v == PERSAMPLE_MULTI )
+499                     tif->tif_flags |= TIFF_PERSAMPLE;
+500             else
+501                     tif->tif_flags &= ~TIFF_PERSAMPLE;
+502             break;
+503     default: {
+504             TIFFTagValue *tv;
+505             int tv_size, iCustom;
+506 
+507             /*
+508              * This can happen if multiple images are open with different
+509              * codecs which have private tags.  The global tag information
+510              * table may then have tags that are valid for one file but not
+511              * the other. If the client tries to set a tag that is not valid
+512              * for the image's codec then we'll arrive here.  This
+513              * happens, for example, when tiffcp is used to convert between
+514              * compression schemes and codec-specific tags are blindly copied.
+515              */
+516             if(fip->field_bit != FIELD_CUSTOM) {
+517                     TIFFErrorExt(tif->tif_clientdata, module,
+518                         "%s: Invalid %stag \"%s\" (not supported by codec)",
+519                         tif->tif_name, isPseudoTag(tag) ? "pseudo-" : "",
+520                         fip->field_name);
+521                     status = 0;
+522                     break;
+523             }
+524 
+525             /*
+526              * Find the existing entry for this custom value.
+527              */
+528             tv = NULL;
+529             for (iCustom = 0; iCustom < td->td_customValueCount; iCustom++) {
+530                     if (td->td_customValues[iCustom].info->field_tag == tag) {
+531                             tv = td->td_customValues + iCustom;
+532                             if (tv->value != NULL) {
+533                                     _TIFFfree(tv->value);
+534                                     tv->value = NULL;
+535                             }
+536                             break;
+537                     }
+538             }
+539 
+540             /*
+541              * Grow the custom list if the entry was not found.
+542              */
+543             if(tv == NULL) {
+544                     TIFFTagValue *new_customValues;
+545 
+546                     td->td_customValueCount++;
+547                     new_customValues = (TIFFTagValue *)
+548                         _TIFFrealloc(td->td_customValues,
+549                         sizeof(TIFFTagValue) * td->td_customValueCount);
+550                     if (!new_customValues) {
+551                             TIFFErrorExt(tif->tif_clientdata, module,
+552                                 "%s: Failed to allocate space for list of custom values",
+553                                 tif->tif_name);
+554                             status = 0;
+555                             goto end;
+556                     }
+557 
+558                     td->td_customValues = new_customValues;
+559 
+560                     tv = td->td_customValues + (td->td_customValueCount - 1);
+561                     tv->info = fip;
+562                     tv->value = NULL;
+563                     tv->count = 0;
+564             }
+565 
+566             /*
+567              * Set custom value ... save a copy of the custom tag value.
+568              */
+569             tv_size = _TIFFDataSize(fip->field_type);
+570             /*--: Rational2Double: For Rationals evaluate "set_field_type" to determine internal storage size. */
+571             if (fip->field_type == TIFF_RATIONAL || fip->field_type == TIFF_SRATIONAL) {
+572                     tv_size = _TIFFSetGetFieldSize(fip->set_field_type);
+573             }
+574             if (tv_size == 0) {
+575                     status = 0;
+576                     TIFFErrorExt(tif->tif_clientdata, module,
+577                         "%s: Bad field type %d for \"%s\"",
+578                         tif->tif_name, fip->field_type,
+579                         fip->field_name);
+580                     goto end;
+581             }
+582 
+583             if (fip->field_type == TIFF_ASCII)
+584             {
+585                     uint32 ma;
+586                     char* mb;
+587                     if (fip->field_passcount)
+588                     {
+589                             assert(fip->field_writecount==TIFF_VARIABLE2);
+590                             ma=(uint32)va_arg(ap,uint32);
+591                             mb=(char*)va_arg(ap,char*);
+592                     }
+593                     else
+594                     {
+595                             mb=(char*)va_arg(ap,char*);
+596                             ma=(uint32)(strlen(mb)+1);
+597                     }
+598                     tv->count=ma;
+599                     setByteArray(&tv->value,mb,ma,1);
+600             }
+601             else
+602             {
+603                     if (fip->field_passcount) {
+604                             if (fip->field_writecount == TIFF_VARIABLE2)
+605                                     tv->count = (uint32) va_arg(ap, uint32);
+606                             else
+607                                     tv->count = (int) va_arg(ap, int);
+608                     } else if (fip->field_writecount == TIFF_VARIABLE
+609                        || fip->field_writecount == TIFF_VARIABLE2)
+610                             tv->count = 1;
+611                     else if (fip->field_writecount == TIFF_SPP)
+612                             tv->count = td->td_samplesperpixel;
+613                     else
+614                             tv->count = fip->field_writecount;
+615 
+616                     if (tv->count == 0) {
+617                             status = 0;
+618                             TIFFErrorExt(tif->tif_clientdata, module,
+619                                          "%s: Null count for \"%s\" (type "
+620                                          "%d, writecount %d, passcount %d)",
+621                                          tif->tif_name,
+622                                          fip->field_name,
+623                                          fip->field_type,
+624                                          fip->field_writecount,
+625                                          fip->field_passcount);
+626                             goto end;
+627                     }
+628 
+629                     tv->value = _TIFFCheckMalloc(tif, tv->count, tv_size,
+630                         "custom tag binary object");
+631                     if (!tv->value) {
+632                             status = 0;
+633                             goto end;
+634                     }
+635 
+636                     if (fip->field_tag == TIFFTAG_DOTRANGE 
+637                         && strcmp(fip->field_name,"DotRange") == 0) {
+638                             /* TODO: This is an evil exception and should not have been
+639                                handled this way ... likely best if we move it into
+640                                the directory structure with an explicit field in 
+641                                libtiff 4.1 and assign it a FIELD_ value */
+642                             uint16 v2[2];
+643                             v2[0] = (uint16)va_arg(ap, int);
+644                             v2[1] = (uint16)va_arg(ap, int);
+645                             _TIFFmemcpy(tv->value, &v2, 4);
+646                     }
+647 
+648                     else if (fip->field_passcount
+649                               || fip->field_writecount == TIFF_VARIABLE
+650                               || fip->field_writecount == TIFF_VARIABLE2
+651                               || fip->field_writecount == TIFF_SPP
+652                               || tv->count > 1) {
+653                       /*--: Rational2Double: For Rationals tv_size is set above to 4 or 8 according to fip->set_field_type! */
+654                             _TIFFmemcpy(tv->value, va_arg(ap, void *),
+655                                 tv->count * tv_size);
+656                     } else {
+657                             char *val = (char *)tv->value;
+658                             assert( tv->count == 1 );
+659 
+660                             switch (fip->field_type) {
+661                             case TIFF_BYTE:
+662                             case TIFF_UNDEFINED:
+663                                     {
+664                                             uint8 v2 = (uint8)va_arg(ap, int);
+665                                             _TIFFmemcpy(val, &v2, tv_size);
+666                                     }
+667                                     break;
+668                             case TIFF_SBYTE:
+669                                     {
+670                                             int8 v2 = (int8)va_arg(ap, int);
+671                                             _TIFFmemcpy(val, &v2, tv_size);
+672                                     }
+673                                     break;
+674                             case TIFF_SHORT:
+675                                     {
+676                                             uint16 v2 = (uint16)va_arg(ap, int);
+677                                             _TIFFmemcpy(val, &v2, tv_size);
+678                                     }
+679                                     break;
+680                             case TIFF_SSHORT:
+681                                     {
+682                                             int16 v2 = (int16)va_arg(ap, int);
+683                                             _TIFFmemcpy(val, &v2, tv_size);
+684                                     }
+685                                     break;
+686                             case TIFF_LONG:
+687                             case TIFF_IFD:
+688                                     {
+689                                             uint32 v2 = va_arg(ap, uint32);
+690                                             _TIFFmemcpy(val, &v2, tv_size);
+691                                     }
+692                                     break;
+693                             case TIFF_SLONG:
+694                                     {
+695                                             int32 v2 = va_arg(ap, int32);
+696                                             _TIFFmemcpy(val, &v2, tv_size);
+697                                     }
+698                                     break;
+699                             case TIFF_LONG8:
+700                             case TIFF_IFD8:
+701                                     {
+702                                             uint64 v2 = va_arg(ap, uint64);
+703                                             _TIFFmemcpy(val, &v2, tv_size);
+704                                     }
+705                                     break;
+706                             case TIFF_SLONG8:
+707                                     {
+708                                             int64 v2 = va_arg(ap, int64);
+709                                             _TIFFmemcpy(val, &v2, tv_size);
+710                                     }
+711                                     break;
+712                             case TIFF_RATIONAL:
+713                             case TIFF_SRATIONAL:
+714                                     /*-- Rational2Double: For Rationals tv_size is set above to 4 or 8 according to fip->set_field_type! */
+715                                     {
+716                                             if (tv_size == 8) {
+717                                                     double v2 = va_arg(ap, double);
+718                                                     _TIFFmemcpy(val, &v2, tv_size);
+719                                             } else {
+720                                                     /*-- default should be tv_size == 4 */
+721                                                     float v3 = (float)va_arg(ap, double);
+722                                                     _TIFFmemcpy(val, &v3, tv_size);
+723                                                     /*-- ToDo: After Testing, this should be removed and tv_size==4 should be set as default. */
+724                                                     if (tv_size != 4) {
+725                                                             TIFFErrorExt(0,"TIFFLib: _TIFFVSetField()", "Rational2Double: .set_field_type in not 4 but %d", tv_size); 
+726                                                     }
+727                                             }
+728                                     }
+729                                     break;
+730                             case TIFF_FLOAT:
+731                                     {
+732                                             float v2 = _TIFFClampDoubleToFloat(va_arg(ap, double));
+733                                             _TIFFmemcpy(val, &v2, tv_size);
+734                                     }
+735                                     break;
+736                             case TIFF_DOUBLE:
+737                                     {
+738                                             double v2 = va_arg(ap, double);
+739                                             _TIFFmemcpy(val, &v2, tv_size);
+740                                     }
+741                                     break;
+742                             default:
+743                                     _TIFFmemset(val, 0, tv_size);
+744                                     status = 0;
+745                                     break;
+746                             }
+747                     }
+748             }
+749     }
+750     }
+751     if (status) {
+752             const TIFFField* fip2=TIFFFieldWithTag(tif,tag);
+753             if (fip2)                
+754                     TIFFSetFieldBit(tif, fip2->field_bit);
+755             tif->tif_flags |= TIFF_DIRTYDIRECT;
+756     }
+757 
+758 end:
+759     va_end(ap);
+760     return (status);
+761 badvalue:
+762         {
+763             const TIFFField* fip2=TIFFFieldWithTag(tif,tag);
+764             TIFFErrorExt(tif->tif_clientdata, module,
+765                  "%s: Bad value %u for \"%s\" tag",
+766                  tif->tif_name, v,
+767                  fip2 ? fip2->field_name : "Unknown");
+768             va_end(ap);
+769         }
+770     return (0);
+771 badvalue32:
+772         {
+773             const TIFFField* fip2=TIFFFieldWithTag(tif,tag);
+774             TIFFErrorExt(tif->tif_clientdata, module,
+775                  "%s: Bad value %u for \"%s\" tag",
+776                  tif->tif_name, v32,
+777                  fip2 ? fip2->field_name : "Unknown");
+778             va_end(ap);
+779         }
+780     return (0);
+781 badvaluedouble:
+782         {
+783         const TIFFField* fip2=TIFFFieldWithTag(tif,tag);
+784         TIFFErrorExt(tif->tif_clientdata, module,
+785              "%s: Bad value %f for \"%s\" tag",
+786              tif->tif_name, dblval,
+787              fip2 ? fip2->field_name : "Unknown");
+788         va_end(ap);
+789         }
+790     return (0);
+791 }

@@ -1,0 +1,32 @@
+Vulnerability Type: divide-by-zero
+Crash/Trigger Point(s): line 3182 in pngrutil.c
+Bug Call Trace:
+    AddressSanitizer:DEADLYSIGNAL
+    =================================================================
+    ==10879==ERROR: AddressSanitizer: FPE on unknown address 0x000000523b61 (pc 0x000000523b61 bp 0xfffffffffffffffc sp 0x7ffc4eee2130 T0)
+        #0 0x523b60 in MAGMA_png_check_chunk_length /magma/targets/libpng/repo/pngrutil.c:3182:44
+        #1 0x5233ed in MAGMA_png_read_chunk_header /magma/targets/libpng/repo/pngrutil.c:185:4
+        #2 0x4e9de1 in MAGMA_png_read_info /magma/targets/libpng/repo/pngread.c:108:28
+        #3 0x4c6a9b in LLVMFuzzerTestOneInput /magma/targets/libpng/repo/contrib/oss-fuzz/libpng_read_fuzzer.cc:159:3
+        #4 0x54d653 in main /magma/fuzzers/afl_asan/repo/afl_driver.cpp:201:7
+        #5 0x7fd03bec2c86 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x21c86)
+        #6 0x41bf49 in _start (/magma_out/libpng_read_fuzzer+0x41bf49)
+
+    AddressSanitizer can not provide additional info.
+    SUMMARY: AddressSanitizer: FPE /magma/targets/libpng/repo/pngrutil.c:3182:44 in MAGMA_png_check_chunk_length
+    ==10879==ABORTING
+Patch:
++      size_t row_factor =
++         (size_t)png_ptr->width
++         * (size_t)png_ptr->channels
++         * (png_ptr->bit_depth > 8? 2: 1)
++         + 1
++         + (png_ptr->interlaced? 6: 0);
+-      size_t row_factor_l =
+-         (size_t)png_ptr->width
+-         * (size_t)png_ptr->channels
+-         * (png_ptr->bit_depth > 8? 2: 1)
+-         + 1
+-         + (png_ptr->interlaced? 6: 0);
+-
+-      size_t row_factor = (png_uint_32)row_factor_l;

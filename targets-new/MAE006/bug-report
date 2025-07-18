@@ -1,0 +1,48 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in exif_scan_thumbnail exif.c:3898:6
+Bug Call Trace:
+    ==14771==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000001712 at pc 0x0000004523c2 bp 0x7ffd91582ab0 sp 0x7ffd91582240
+    READ of size 3 at 0x602000001712 thread T0
+    SCARINESS: 15 (3-byte-read-heap-buffer-overflow)
+        #0 0x4523c1 in __interceptor_memcmp /scratch/llvm/clang-4/xenial/final/llvm.src/projects/compiler-rt/lib/asan/../sanitizer_common/sanitizer_common_interceptors.inc:690:7
+        #1 0x72ac2d in exif_scan_thumbnail /home/ninja/php/php-7.3.6/ext/exif/exif.c:3898:6
+        #2 0x728462 in zif_exif_read_data /home/ninja/php/php-7.3.6/ext/exif/exif.c:4583:4
+        #3 0xe259ce in ZEND_DO_ICALL_SPEC_RETVAL_UNUSED_HANDLER /home/ninja/php/php-7.3.6/Zend/zend_vm_execute.h:645:2
+        #4 0xd22ed3 in execute_ex /home/ninja/php/php-7.3.6/Zend/zend_vm_execute.h:55334:7
+        #5 0xd235fc in zend_execute /home/ninja/php/php-7.3.6/Zend/zend_vm_execute.h:60881:2
+        #6 0xbe4f1c in zend_execute_scripts /home/ninja/php/php-7.3.6/Zend/zend.c:1568:4
+        #7 0xa3d95d in php_execute_script /home/ninja/php/php-7.3.6/main/main.c:2630:14
+        #8 0xf22877 in do_cli /home/ninja/php/php-7.3.6/sapi/cli/php_cli.c:997:5
+        #9 0xf1f656 in main /home/ninja/php/php-7.3.6/sapi/cli/php_cli.c:1389:18
+        #10 0x7f4194434b96 in __libc_start_main /build/glibc-OTsEL5/glibc-2.27/csu/../csu/libc-start.c:310
+        #11 0x4395b9 in _start (/home/ninja/php/php-7.3.6_asan/sapi/cli/php+0x4395b9)
+
+    0x602000001712 is located 0 bytes to the right of 2-byte region [0x602000001710,0x602000001712)
+    allocated by thread T0 here:
+        #0 0x4e02ac in malloc /scratch/llvm/clang-4/xenial/final/llvm.src/projects/compiler-rt/lib/asan/asan_malloc_linux.cc:66:3
+        #1 0xb39a2e in __zend_malloc /home/ninja/php/php-7.3.6/Zend/zend_alloc.c:2903:14
+
+    SUMMARY: AddressSanitizer: heap-buffer-overflow /scratch/llvm/clang-4/xenial/final/llvm.src/projects/compiler-rt/lib/asan/../sanitizer_common/sanitizer_common_interceptors.inc:690:7 in __interceptor_memcmp
+
+Patch:
+    diff --git a/ext/exif/exif.c b/ext/exif/exif.c
+    index 8606bdd926..71981ae2e8 100644
+    --- a/ext/exif/exif.c
+    +++ b/ext/exif/exif.c
+    @@ ... @@ static int exif_scan_thumbnail(image_info_type *ImageInfo)
+        int             n, marker;
+        size_t          length=2, pos=0;
+        jpeg_sof_info   sof_info;
+    -
+    +#ifdef MAGMA_ENABLE_FIXES
+        if (!data || ImageInfo->Thumbnail.size < 4) {
+            return false; /* nothing to do here */
+        }
+    +#else
+    +	if (!data) {
+    +		return false; /* nothing to do here */
+    +	}
+    +#endif
+        if (memcmp(data, "\xFF\xD8\xFF", 3)) {
+            if (!ImageInfo->Thumbnail.width && !ImageInfo->Thumbnail.height) {
+                exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_WARNING, "Thumbnail is not a JPEG image");

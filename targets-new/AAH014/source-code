@@ -1,0 +1,108 @@
+In tif_dirwrite.c:
+2045 static int
+2046 TIFFWriteDirectoryTagColormap(TIFF* tif, uint32* ndir, TIFFDirEntry* dir)
+2047 {
+2048    static const char module[] = "TIFFWriteDirectoryTagColormap";
+2049    uint32 m;
+2050    uint16* n;
+2051    int o;
+2052    if (dir==NULL)
+2053    {
+2054            (*ndir)++;
+2055            return(1);
+2056    }
+2057    m=(1<<tif->tif_dir.td_bitspersample);
+2058    n=_TIFFmalloc(3*m*sizeof(uint16));
+2059    if (n==NULL)
+2060    {
+2061            TIFFErrorExt(tif->tif_clientdata,module,"Out of memory");
+2062            return(0);
+2063    }
+2064    _TIFFmemcpy(&n[0],tif->tif_dir.td_colormap[0],m*sizeof(uint16));
+2065    _TIFFmemcpy(&n[m],tif->tif_dir.td_colormap[1],m*sizeof(uint16));
+2066    _TIFFmemcpy(&n[2*m],tif->tif_dir.td_colormap[2],m*sizeof(uint16));
+2067    o=TIFFWriteDirectoryTagCheckedShortArray(tif,ndir,dir,TIFFTAG_COLORMAP,3*m,n);
+2068    _TIFFfree(n);
+2069    return(o);
+2070 }
+
+In tif_pixarlog.c:
+901 static int
+902 PixarLogSetupEncode(TIFF* tif)
+903 {
+904     static const char module[] = "PixarLogSetupEncode";
+905     TIFFDirectory *td = &tif->tif_dir;
+906     PixarLogState* sp = EncoderState(tif);
+907     tmsize_t tbuf_size;
+908 
+909     assert(sp != NULL);
+910 
+911     /* for some reason, we can't do this in TIFFInitPixarLog */
+912 
+913     sp->stride = (td->td_planarconfig == PLANARCONFIG_CONTIG ?
+914         td->td_samplesperpixel : 1);
+915     tbuf_size = multiply_ms(multiply_ms(multiply_ms(sp->stride, td->td_imagewidth),
+916                                   td->td_rowsperstrip), sizeof(uint16));
+917     if (tbuf_size == 0)
+918             return (0);  /* TODO: this is an error return without error report through TIFFErrorExt */
+919     sp->tbuf = (uint16 *) _TIFFmalloc(tbuf_size);
+920     if (sp->tbuf == NULL)
+921             return (0);
+922     if (sp->user_datafmt == PIXARLOGDATAFMT_UNKNOWN)
+923             sp->user_datafmt = PixarLogGuessDataFmt(td);
+924     if (sp->user_datafmt == PIXARLOGDATAFMT_UNKNOWN) {
+925             TIFFErrorExt(tif->tif_clientdata, module, "PixarLog compression can't handle %d bit linear encodings", td->td_bitspersample);
+926             return (0);
+927     }
+928 
+929     if (deflateInit(&sp->stream, sp->quality) != Z_OK) {
+930             TIFFErrorExt(tif->tif_clientdata, module, "%s", sp->stream.msg ? sp->stream.msg : "(null)");
+931             return (0);
+932     } else {
+933             sp->state |= PLSTATE_INIT;
+934             return (1);
+935     }
+936 }
+
+In tif_dir.c:
+840 int
+841 TIFFSetField(TIFF* tif, uint32 tag, ...)
+842 {
+843     va_list ap;
+844     int status;
+845 
+846     va_start(ap, tag);
+847     status = TIFFVSetField(tif, tag, ap);
+848     va_end(ap);
+849     return (status);
+850 }
+
+In tif_pixarlog.c:
+1254 static void
+1255 PixarLogClose(TIFF* tif)
+1256 {
+1257         PixarLogState* sp = (PixarLogState*) tif->tif_data;
+1258    TIFFDirectory *td = &tif->tif_dir;
+1259 
+1260    assert(sp != 0);
+1261    /* In a really sneaky (and really incorrect, and untruthful, and
+1262     * troublesome, and error-prone) maneuver that completely goes against
+1263     * the spirit of TIFF, and breaks TIFF, on close, we covertly
+1264     * modify both bitspersample and sampleformat in the directory to
+1265     * indicate 8-bit linear.  This way, the decode "just works" even for
+1266     * readers that don't know about PixarLog, or how to set
+1267     * the PIXARLOGDATFMT pseudo-tag.
+1268     */
+1269         {
+1270             /* We test the state to avoid an issue such as in
+1271              * http://bugzilla.maptools.org/show_bug.cgi?id=2604
+1272              * What appends in that case is that the bitspersample is 1 and
+1273              * a TransferFunction is set. The size of the TransferFunction
+1274              * depends on 1<<bitspersample. So if we increase it, an access
+1275              * out of the buffer will happen at directory flushing.
+1276              * Another option would be to clear those targs. 
+1277              */
+1278             td->td_bitspersample = 8;
+1279             td->td_sampleformat = SAMPLEFORMAT_UINT;
+1280         }
+1281 }

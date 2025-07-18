@@ -1,0 +1,23 @@
+Information:
+    Vulnerability Type: use-of-uninitialized-variable
+    Crash/Trigger Point(s): line 5 in example.c, line 6 in example.c
+
+    Relevant Source Code:
+    In example.c:
+    line 1    #include <stdio.h>
+    line 2
+    line 3    void foo() {
+    line 4        int a, b, c, d;
+    line 5        int v = sscanf(input.field,"%d.%d.%d.%d",&a,&b,&c,&d);
+    line 6        use(b);
+    line 7    }
+
+Steps for triggering condition generation:
+    1. Identify and output each conditional statement along with its code location.
+        v < 2, line 6 in example.c (line 6 means the conditional statement should already be satisfied when executing line 6)
+    2. If multiple conditional statements across different locations are required, assign an execution order to each group.
+        v < 2, line 6 in example.c, 0 (0 means executed 1st)
+    3. For any complex conditional statements, decompose them into atomic conditional statements, and assign a conjunct identifier to each one for later reconstruction.
+        v < 2, line 6 in example.c, 0, 0 (we first convert the target conditional statement into its Disjunctive Normal Form. The resulting DNF consists of n conjuncts, each representing a set of AND operations between primitive sub-conditions. Within this framework, the element conj serves as an identifier specifying the originating conjunct i for each primitive condition, 0 means the first conjunct)
+    4. Finally, output all triggering conditions in the form of tuples: <cond, loc, seq, conj>
+        <v < 2, line 6 in example.c, 0, 0>

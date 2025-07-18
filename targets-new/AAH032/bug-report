@@ -1,0 +1,37 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in xmlParseEncodingDecl (ctxt=0x617000000080) at parser.c:10404
+Bug Call Trace:
+        #1  0x000000000050eacf in xmlParseEncodingDecl (ctxt=0x617000000080) at parser.c:10404
+        #2  0x0000000000526adc in xmlParseXMLDecl (ctxt=<optimized out>) at parser.c:10547
+        #3  0x000000000052870a in xmlParseDocument (ctxt=0x617000000080) at parser.c:10690
+        #4  0x0000000000544f12 in xmlDoRead (ctxt=0x617000000080, URL=0x91bec0 <str> "noname.xml", encoding=<optimized out>, options=<optimized out>, 
+        reuse=0) at parser.c:15115
+        #5  0x00000000005452cf in xmlReadMemory (buffer=<optimized out>, size=<optimized out>, URL=0x91bec0 <str> "noname.xml", encoding=0x0, options=0)
+        at parser.c:15201
+        #6  0x00000000004c82ca in LLVMFuzzerTestOneInput (
+        data=0x611000000040 "<?xml version=\"1.0\" encoding=\"EUC-JP\"\265>\003<foo>\nText with EUC-JP char\004", size=233)
+        at /root/magma_trigger/targets/libxml2/src/libxml2_xml_read_memory_fuzzer.cc:35
+        #7  0x0000000000905844 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+        #8  0x0000000000904ad1 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+        diff --git a/parser.c b/parser.c
+        index 3f31329..ff89bb7 100644
+        --- a/parser.c
+        +++ b/parser.c
+        @@ -10330,11 +10330,22 @@ xmlParseEncodingDecl(xmlParserCtxtPtr ctxt) {
+        
+                handler = xmlFindCharEncodingHandler((const char *) encoding);
+                if (handler != NULL) {
+        -		if (xmlSwitchToEncoding(ctxt, handler) < 0) {
+        +                int m_tmp = xmlSwitchToEncoding(ctxt, handler);
+        +#ifdef MAGMA_ENABLE_FIXES
+        +		if (m_tmp < 0) {
+                        /* failed to convert */
+                        ctxt->errNo = XML_ERR_UNSUPPORTED_ENCODING;
+                        return(NULL);
+                        }
+        +#endif
+                } else {
+                        xmlFatalErrMsgStr(ctxt, XML_ERR_UNSUPPORTED_ENCODING,
+                                "Unsupported encoding %s\n", encoding);

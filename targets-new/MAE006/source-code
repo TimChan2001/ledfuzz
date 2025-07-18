@@ -1,0 +1,90 @@
+In exif.c:
+3886 /* {{{ exif_scan_thumbnail
+3887  * scan JPEG in thumbnail (memory) */
+3888 static int exif_scan_thumbnail(image_info_type *ImageInfo)
+3889 {
+3890    uchar           c, *data = (uchar*)ImageInfo->Thumbnail.data;
+3891    int             n, marker;
+3892    size_t          length=2, pos=0;
+3893    jpeg_sof_info   sof_info;
+3894 
+3895    if (!data) {
+3896            return FALSE; /* nothing to do here */
+3897    }
+3898    if (memcmp(data, "\xFF\xD8\xFF", 3)) {
+3899            if (!ImageInfo->Thumbnail.width && !ImageInfo->Thumbnail.height) {
+3900                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_WARNING, "Thumbnail is not a JPEG image");
+3901            }
+3902            return FALSE;
+3903    }
+3904    for (;;) {
+3905            pos += length;
+3906            if (pos>=ImageInfo->Thumbnail.size)
+3907                    return FALSE;
+3908            c = data[pos++];
+3909            if (pos>=ImageInfo->Thumbnail.size)
+3910                    return FALSE;
+3911            if (c != 0xFF) {
+3912                    return FALSE;
+3913            }
+3914            n = 8;
+3915            while ((c = data[pos++]) == 0xFF && n--) {
+3916                    if (pos+3>=ImageInfo->Thumbnail.size)
+3917                            return FALSE;
+3918                    /* +3 = pos++ of next check when reaching marker + 2 bytes for length */
+3919            }
+3920            if (c == 0xFF)
+3921                    return FALSE;
+3922            marker = c;
+3923            if (pos>=ImageInfo->Thumbnail.size)
+3924                    return FALSE;
+3925            length = php_jpg_get16(data+pos);
+3926            if (length > ImageInfo->Thumbnail.size || pos >= ImageInfo->Thumbnail.size - length) {
+3927                    return FALSE;
+3928            }
+3929 #ifdef EXIF_DEBUG
+3930            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Thumbnail: process section(x%02X=%s) @ x%04X + x%04X", marker, exif_get_markername(marker), pos, length);
+3931 #endif
+3932            switch (marker) {
+3933                    case M_SOF0:
+3934                    case M_SOF1:
+3935                    case M_SOF2:
+3936                    case M_SOF3:
+3937                    case M_SOF5:
+3938                    case M_SOF6:
+3939                    case M_SOF7:
+3940                    case M_SOF9:
+3941                    case M_SOF10:
+3942                    case M_SOF11:
+3943                    case M_SOF13:
+3944                    case M_SOF14:
+3945                    case M_SOF15:
+3946                            /* handle SOFn block */
+3947                            if (length < 8 || ImageInfo->Thumbnail.size - 8 < pos) {
+3948                                    /* exif_process_SOFn needs 8 bytes */
+3949                                    return FALSE;
+3950                            }
+3951                            exif_process_SOFn(data+pos, marker, &sof_info);
+3952                            ImageInfo->Thumbnail.height   = sof_info.height;
+3953                            ImageInfo->Thumbnail.width    = sof_info.width;
+3954 #ifdef EXIF_DEBUG
+3955                            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Thumbnail: size: %d * %d", sof_info.width, sof_info.height);
+3956 #endif
+3957                            return TRUE;
+3958 
+3959                    case M_SOS:
+3960                    case M_EOI:
+3961                            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_WARNING, "Could not compute size of thumbnail");
+3962                            return FALSE;
+3963                            break;
+3964 
+3965                    default:
+3966                            /* just skip */
+3967                            break;
+3968            }
+3969    }
+3970 
+3971    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_WARNING, "Could not compute size of thumbnail");
+3972    return FALSE;
+3973 }
+3974 /* }}} */

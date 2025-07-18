@@ -1,0 +1,31 @@
+Vulnerability Type: there is a denial of service vulnerability in the TIFFOpen function. A crafted input will lead to a denial of service attack. During the TIFFOpen process, td_imagelength is not checked. The value of td_imagelength can be directly controlled by an input file. In the ChopUpSingleUncompressedStrip function, the _TIFFCheckMalloc function is called based on td_imagelength. If we set the value of td_imagelength close to the amount of system memory, it will hang the system or trigger the OOM killer.
+Crash/Trigger Point(s): in ChopUpSingleUncompressedStrip at tif_dirread.c:5969
+Bug Call Trace:
+    #1  0x000000000050552e in ChopUpSingleUncompressedStrip at tif_dirread.c:5969
+    #2  0x00000000004f0689 in TIFFReadDirectory (tif=<optimized out>) at tif_dirread.c:4306
+    #3  0x000000000054c739 in TIFFClientOpen (name=<optimized out>, mode=<optimized out>, clientdata=<optimized out>, readproc=<optimized out>, writeproc=<optimized out>, 
+        seekproc=<optimized out>, closeproc=<optimized out>, sizeproc=<optimized out>, mapproc=<optimized out>, unmapproc=<optimized out>) at tif_open.c:483
+    #4  0x00000000004cb2d5 in _tiffStreamOpen (name=0x639ec0 <str> "MemTIFF", mode=0x63a1c0 <str> "rm", fd=0x7ffd08889d60) at tif_stream.cxx:384
+    #5  0x00000000004cb551 in TIFFStreamOpen (name=0x64a0a0 <str> "AAH022", is=0xefd8) at tif_stream.cxx:423
+    #6  0x00000000004c9695 in LLVMFuzzerTestOneInput (Data=0x61d000000080 "II*", Size=<optimized out>) at contrib/oss-fuzz/tiff_read_rgba_fuzzer.cc:56
+    #7  0x0000000000623d84 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #8  0x0000000000623011 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/libtiff/tif_dirread.c b/libtiff/tif_dirread.c
+    index 1b300b0..47d6992 100644
+    --- a/libtiff/tif_dirread.c
+    +++ b/libtiff/tif_dirread.c
+    @@ -5852,3 +5852,4 @@ ChopUpSingleUncompressedStrip(TIFF* tif)
+            /* If we are going to allocate a lot of memory, make sure that the */
+            /* file is as big as needed */
+    +#ifdef MAGMA_ENABLE_FIXES
+            if( tif->tif_mode == O_RDONLY &&
+    @@ -5861,6 +5862,13 @@ ChopUpSingleUncompressedStrip(TIFF* tif)
+            {
+                return;
+            }
+    +#endif
+    
+            allocChoppedUpStripArrays(tif, nstrips, stripbytes, rowsperstrip);
+    }

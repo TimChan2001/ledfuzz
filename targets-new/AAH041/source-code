@@ -1,0 +1,62 @@
+In parser.c:
+8303 /**
+8304  * xmlParseInternalSubset:
+8305  * @ctxt:  an XML parser context
+8306  *
+8307  * parse the internal subset declaration
+8308  *
+8309  * [28 end] ('[' (markupdecl | PEReference | S)* ']' S?)? '>'
+8310  */
+8311 
+8312 static void
+8313 xmlParseInternalSubset(xmlParserCtxtPtr ctxt) {
+8314     /*
+8315      * Is there any DTD definition ?
+8316      */
+8317     if (RAW == '[') {
+8318         int baseInputNr = ctxt->inputNr;
+8319         ctxt->instate = XML_PARSER_DTD;
+8320         NEXT;
+8321    /*
+8322     * Parse the succession of Markup declarations and
+8323     * PEReferences.
+8324     * Subsequence (markupdecl | PEReference | S)*
+8325     */
+8326    while (((RAW != ']') || (ctxt->inputNr > baseInputNr)) &&
+8327                (ctxt->instate != XML_PARSER_EOF)) {
+8328        const xmlChar *check = CUR_PTR;
+8329        unsigned int cons = ctxt->input->consumed;
+8330 
+8331        SKIP_BLANKS;
+8332        xmlParseMarkupDecl(ctxt);
+8333        xmlParsePEReference(ctxt);
+8334 
+8335             /*
+8336              * Conditional sections are allowed from external entities included
+8337              * by PE References in the internal subset.
+8338              */
+8339             if ((ctxt->inputNr > 1) && (ctxt->input->filename != NULL) &&
+8340                 (RAW == '<') && (NXT(1) == '!') && (NXT(2) == '[')) {
+8341                 xmlParseConditionalSections(ctxt);
+8342             }
+8343 
+8344        if ((CUR_PTR == check) && (cons == ctxt->input->consumed)) {
+8345            xmlFatalErr(ctxt, XML_ERR_INTERNAL_ERROR,
+8346         "xmlParseInternalSubset: error detected in Markup declaration\n");
+8347                 if (ctxt->inputNr > baseInputNr)
+8348                     xmlPopInput(ctxt);
+8349                 else
+8350                break;
+8351        }
+8352    }
+8353    if (RAW == ']') {
+8354        NEXT;
+8355        SKIP_BLANKS;
+8356    }
+8357     }
+8358 
+8359     /*
+8360      * We should be at the end of the DOCTYPE declaration.
+8361      */
+8362     NEXT;
+8363 }

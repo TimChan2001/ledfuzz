@@ -1,0 +1,469 @@
+Information:
+    Vulnerability Type: NULL Pointer Dereference
+    Crash/Trigger Point(s): line 547 in tif_print.c, "td->td_samplesperpixel"
+
+    Relevant Source Code:
+    In tif_print.c:
+    229 /*
+    230  * Print the contents of the current directory
+    231  * to the specified stdio file stream.
+    232  */
+    233 void
+    234 TIFFPrintDirectory(TIFF* tif, FILE* fd, long flags)
+    235 {
+    236     TIFFDirectory *td = &tif->tif_dir;
+    237     char *sep;
+    238     long l, n;
+    239 
+    240 #if defined(__WIN32__) && (defined(_MSC_VER) || defined(__MINGW32__))
+    241     fprintf(fd, "TIFF Directory at offset 0x%I64x (%I64u)\n",
+    242             (unsigned __int64) tif->tif_diroff,
+    243             (unsigned __int64) tif->tif_diroff);
+    244 #else
+    245     fprintf(fd, "TIFF Directory at offset 0x%llx (%llu)\n",
+    246             (unsigned long long) tif->tif_diroff,
+    247             (unsigned long long) tif->tif_diroff);
+    248 #endif
+    249     if (TIFFFieldSet(tif,FIELD_SUBFILETYPE)) {
+    250             fprintf(fd, "  Subfile Type:");
+    251             sep = " ";
+    252             if (td->td_subfiletype & FILETYPE_REDUCEDIMAGE) {
+    253                     fprintf(fd, "%sreduced-resolution image", sep);
+    254                     sep = "/";
+    255             }
+    256             if (td->td_subfiletype & FILETYPE_PAGE) {
+    257                     fprintf(fd, "%smulti-page document", sep);
+    258                     sep = "/";
+    259             }
+    260             if (td->td_subfiletype & FILETYPE_MASK)
+    261                     fprintf(fd, "%stransparency mask", sep);
+    262             fprintf(fd, " (%lu = 0x%lx)\n",
+    263                 (unsigned long) td->td_subfiletype, (long) td->td_subfiletype);
+    264     }
+    265     if (TIFFFieldSet(tif,FIELD_IMAGEDIMENSIONS)) {
+    266             fprintf(fd, "  Image Width: %lu Image Length: %lu",
+    267                 (unsigned long) td->td_imagewidth, (unsigned long) td->td_imagelength);
+    268             if (TIFFFieldSet(tif,FIELD_IMAGEDEPTH))
+    269                     fprintf(fd, " Image Depth: %lu",
+    270                         (unsigned long) td->td_imagedepth);
+    271             fprintf(fd, "\n");
+    272     }
+    273     if (TIFFFieldSet(tif,FIELD_TILEDIMENSIONS)) {
+    274             fprintf(fd, "  Tile Width: %lu Tile Length: %lu",
+    275                 (unsigned long) td->td_tilewidth, (unsigned long) td->td_tilelength);
+    276             if (TIFFFieldSet(tif,FIELD_TILEDEPTH))
+    277                     fprintf(fd, " Tile Depth: %lu",
+    278                         (unsigned long) td->td_tiledepth);
+    279             fprintf(fd, "\n");
+    280     }
+    281     if (TIFFFieldSet(tif,FIELD_RESOLUTION)) {
+    282             fprintf(fd, "  Resolution: %g, %g",
+    283                 td->td_xresolution, td->td_yresolution);
+    284             if (TIFFFieldSet(tif,FIELD_RESOLUTIONUNIT)) {
+    285                     switch (td->td_resolutionunit) {
+    286                     case RESUNIT_NONE:
+    287                             fprintf(fd, " (unitless)");
+    288                             break;
+    289                     case RESUNIT_INCH:
+    290                             fprintf(fd, " pixels/inch");
+    291                             break;
+    292                     case RESUNIT_CENTIMETER:
+    293                             fprintf(fd, " pixels/cm");
+    294                             break;
+    295                     default:
+    296                             fprintf(fd, " (unit %u = 0x%x)",
+    297                                 td->td_resolutionunit,
+    298                                 td->td_resolutionunit);
+    299                             break;
+    300                     }
+    301             }
+    302             fprintf(fd, "\n");
+    303     }
+    304     if (TIFFFieldSet(tif,FIELD_POSITION))
+    305             fprintf(fd, "  Position: %g, %g\n",
+    306                 td->td_xposition, td->td_yposition);
+    307     if (TIFFFieldSet(tif,FIELD_BITSPERSAMPLE))
+    308             fprintf(fd, "  Bits/Sample: %u\n", td->td_bitspersample);
+    309     if (TIFFFieldSet(tif,FIELD_SAMPLEFORMAT)) {
+    310             fprintf(fd, "  Sample Format: ");
+    311             switch (td->td_sampleformat) {
+    312             case SAMPLEFORMAT_VOID:
+    313                     fprintf(fd, "void\n");
+    314                     break;
+    315             case SAMPLEFORMAT_INT:
+    316                     fprintf(fd, "signed integer\n");
+    317                     break;
+    318             case SAMPLEFORMAT_UINT:
+    319                     fprintf(fd, "unsigned integer\n");
+    320                     break;
+    321             case SAMPLEFORMAT_IEEEFP:
+    322                     fprintf(fd, "IEEE floating point\n");
+    323                     break;
+    324             case SAMPLEFORMAT_COMPLEXINT:
+    325                     fprintf(fd, "complex signed integer\n");
+    326                     break;
+    327             case SAMPLEFORMAT_COMPLEXIEEEFP:
+    328                     fprintf(fd, "complex IEEE floating point\n");
+    329                     break;
+    330             default:
+    331                     fprintf(fd, "%u (0x%x)\n",
+    332                         td->td_sampleformat, td->td_sampleformat);
+    333                     break;
+    334             }
+    335     }
+    336     if (TIFFFieldSet(tif,FIELD_COMPRESSION)) {
+    337             const TIFFCodec* c = TIFFFindCODEC(td->td_compression);
+    338             fprintf(fd, "  Compression Scheme: ");
+    339             if (c)
+    340                     fprintf(fd, "%s\n", c->name);
+    341             else
+    342                     fprintf(fd, "%u (0x%x)\n",
+    343                         td->td_compression, td->td_compression);
+    344     }
+    345     if (TIFFFieldSet(tif,FIELD_PHOTOMETRIC)) {
+    346             fprintf(fd, "  Photometric Interpretation: ");
+    347             if (td->td_photometric < NPHOTONAMES)
+    348                     fprintf(fd, "%s\n", photoNames[td->td_photometric]);
+    349             else {
+    350                     switch (td->td_photometric) {
+    351                     case PHOTOMETRIC_LOGL:
+    352                             fprintf(fd, "CIE Log2(L)\n");
+    353                             break;
+    354                     case PHOTOMETRIC_LOGLUV:
+    355                             fprintf(fd, "CIE Log2(L) (u',v')\n");
+    356                             break;
+    357                     default:
+    358                             fprintf(fd, "%u (0x%x)\n",
+    359                                 td->td_photometric, td->td_photometric);
+    360                             break;
+    361                     }
+    362             }
+    363     }
+    364     if (TIFFFieldSet(tif,FIELD_EXTRASAMPLES) && td->td_extrasamples) {
+    365             uint16 i;
+    366             fprintf(fd, "  Extra Samples: %u<", td->td_extrasamples);
+    367             sep = "";
+    368             for (i = 0; i < td->td_extrasamples; i++) {
+    369                     switch (td->td_sampleinfo[i]) {
+    370                     case EXTRASAMPLE_UNSPECIFIED:
+    371                             fprintf(fd, "%sunspecified", sep);
+    372                             break;
+    373                     case EXTRASAMPLE_ASSOCALPHA:
+    374                             fprintf(fd, "%sassoc-alpha", sep);
+    375                             break;
+    376                     case EXTRASAMPLE_UNASSALPHA:
+    377                             fprintf(fd, "%sunassoc-alpha", sep);
+    378                             break;
+    379                     default:
+    380                             fprintf(fd, "%s%u (0x%x)", sep,
+    381                                 td->td_sampleinfo[i], td->td_sampleinfo[i]);
+    382                             break;
+    383                     }
+    384                     sep = ", ";
+    385             }
+    386             fprintf(fd, ">\n");
+    387     }
+    388     if (TIFFFieldSet(tif,FIELD_INKNAMES)) {
+    389             char* cp;
+    390             uint16 i;
+    391             fprintf(fd, "  Ink Names: ");
+    392             i = td->td_samplesperpixel;
+    393             sep = "";
+    394             for (cp = td->td_inknames; 
+    395                  i > 0 && cp < td->td_inknames + td->td_inknameslen; 
+    396                  cp = strchr(cp,'\0')+1, i--) {
+    397                     size_t max_chars = 
+    398                             td->td_inknameslen - (cp - td->td_inknames);
+    399                     fputs(sep, fd);
+    400                     _TIFFprintAsciiBounded(fd, cp, max_chars);
+    401                     sep = ", ";
+    402             }
+    403                 fputs("\n", fd);
+    404     }
+    405     if (TIFFFieldSet(tif,FIELD_THRESHHOLDING)) {
+    406             fprintf(fd, "  Thresholding: ");
+    407             switch (td->td_threshholding) {
+    408             case THRESHHOLD_BILEVEL:
+    409                     fprintf(fd, "bilevel art scan\n");
+    410                     break;
+    411             case THRESHHOLD_HALFTONE:
+    412                     fprintf(fd, "halftone or dithered scan\n");
+    413                     break;
+    414             case THRESHHOLD_ERRORDIFFUSE:
+    415                     fprintf(fd, "error diffused\n");
+    416                     break;
+    417             default:
+    418                     fprintf(fd, "%u (0x%x)\n",
+    419                         td->td_threshholding, td->td_threshholding);
+    420                     break;
+    421             }
+    422     }
+    423     if (TIFFFieldSet(tif,FIELD_FILLORDER)) {
+    424             fprintf(fd, "  FillOrder: ");
+    425             switch (td->td_fillorder) {
+    426             case FILLORDER_MSB2LSB:
+    427                     fprintf(fd, "msb-to-lsb\n");
+    428                     break;
+    429             case FILLORDER_LSB2MSB:
+    430                     fprintf(fd, "lsb-to-msb\n");
+    431                     break;
+    432             default:
+    433                     fprintf(fd, "%u (0x%x)\n",
+    434                         td->td_fillorder, td->td_fillorder);
+    435                     break;
+    436             }
+    437     }
+    438     if (TIFFFieldSet(tif,FIELD_YCBCRSUBSAMPLING))
+    439         {
+    440             fprintf(fd, "  YCbCr Subsampling: %u, %u\n",
+    441                     td->td_ycbcrsubsampling[0], td->td_ycbcrsubsampling[1] );
+    442     }
+    443     if (TIFFFieldSet(tif,FIELD_YCBCRPOSITIONING)) {
+    444             fprintf(fd, "  YCbCr Positioning: ");
+    445             switch (td->td_ycbcrpositioning) {
+    446             case YCBCRPOSITION_CENTERED:
+    447                     fprintf(fd, "centered\n");
+    448                     break;
+    449             case YCBCRPOSITION_COSITED:
+    450                     fprintf(fd, "cosited\n");
+    451                     break;
+    452             default:
+    453                     fprintf(fd, "%u (0x%x)\n",
+    454                         td->td_ycbcrpositioning, td->td_ycbcrpositioning);
+    455                     break;
+    456             }
+    457     }
+    458     if (TIFFFieldSet(tif,FIELD_HALFTONEHINTS))
+    459             fprintf(fd, "  Halftone Hints: light %u dark %u\n",
+    460                 td->td_halftonehints[0], td->td_halftonehints[1]);
+    461     if (TIFFFieldSet(tif,FIELD_ORIENTATION)) {
+    462             fprintf(fd, "  Orientation: ");
+    463             if (td->td_orientation < NORIENTNAMES)
+    464                     fprintf(fd, "%s\n", orientNames[td->td_orientation]);
+    465             else
+    466                     fprintf(fd, "%u (0x%x)\n",
+    467                         td->td_orientation, td->td_orientation);
+    468     }
+    469     if (TIFFFieldSet(tif,FIELD_SAMPLESPERPIXEL))
+    470             fprintf(fd, "  Samples/Pixel: %u\n", td->td_samplesperpixel);
+    471     if (TIFFFieldSet(tif,FIELD_ROWSPERSTRIP)) {
+    472             fprintf(fd, "  Rows/Strip: ");
+    473             if (td->td_rowsperstrip == (uint32) -1)
+    474                     fprintf(fd, "(infinite)\n");
+    475             else
+    476                     fprintf(fd, "%lu\n", (unsigned long) td->td_rowsperstrip);
+    477     }
+    478     if (TIFFFieldSet(tif,FIELD_MINSAMPLEVALUE))
+    479             fprintf(fd, "  Min Sample Value: %u\n", td->td_minsamplevalue);
+    480     if (TIFFFieldSet(tif,FIELD_MAXSAMPLEVALUE))
+    481             fprintf(fd, "  Max Sample Value: %u\n", td->td_maxsamplevalue);
+    482     if (TIFFFieldSet(tif,FIELD_SMINSAMPLEVALUE)) {
+    483             int i;
+    484             int count = (tif->tif_flags & TIFF_PERSAMPLE) ? td->td_samplesperpixel : 1;
+    485             fprintf(fd, "  SMin Sample Value:");
+    486             for (i = 0; i < count; ++i)
+    487                     fprintf(fd, " %g", td->td_sminsamplevalue[i]);
+    488             fprintf(fd, "\n");
+    489     }
+    490     if (TIFFFieldSet(tif,FIELD_SMAXSAMPLEVALUE)) {
+    491             int i;
+    492             int count = (tif->tif_flags & TIFF_PERSAMPLE) ? td->td_samplesperpixel : 1;
+    493             fprintf(fd, "  SMax Sample Value:");
+    494             for (i = 0; i < count; ++i)
+    495                     fprintf(fd, " %g", td->td_smaxsamplevalue[i]);
+    496             fprintf(fd, "\n");
+    497     }
+    498     if (TIFFFieldSet(tif,FIELD_PLANARCONFIG)) {
+    499             fprintf(fd, "  Planar Configuration: ");
+    500             switch (td->td_planarconfig) {
+    501             case PLANARCONFIG_CONTIG:
+    502                     fprintf(fd, "single image plane\n");
+    503                     break;
+    504             case PLANARCONFIG_SEPARATE:
+    505                     fprintf(fd, "separate image planes\n");
+    506                     break;
+    507             default:
+    508                     fprintf(fd, "%u (0x%x)\n",
+    509                         td->td_planarconfig, td->td_planarconfig);
+    510                     break;
+    511             }
+    512     }
+    513     if (TIFFFieldSet(tif,FIELD_PAGENUMBER))
+    514             fprintf(fd, "  Page Number: %u-%u\n",
+    515                 td->td_pagenumber[0], td->td_pagenumber[1]);
+    516     if (TIFFFieldSet(tif,FIELD_COLORMAP)) {
+    517             fprintf(fd, "  Color Map: ");
+    518             if (flags & TIFFPRINT_COLORMAP) {
+    519                     fprintf(fd, "\n");
+    520                     n = 1L<<td->td_bitspersample;
+    521                     for (l = 0; l < n; l++)
+    522                             fprintf(fd, "   %5ld: %5u %5u %5u\n",
+    523                                 l,
+    524                                 td->td_colormap[0][l],
+    525                                 td->td_colormap[1][l],
+    526                                 td->td_colormap[2][l]);
+    527             } else
+    528                     fprintf(fd, "(present)\n");
+    529     }
+    530     if (TIFFFieldSet(tif,FIELD_REFBLACKWHITE)) {
+    531             int i;
+    532             fprintf(fd, "  Reference Black/White:\n");
+    533             for (i = 0; i < 3; i++)
+    534             fprintf(fd, "    %2d: %5g %5g\n", i,
+    535                     td->td_refblackwhite[2*i+0],
+    536                     td->td_refblackwhite[2*i+1]);
+    537     }
+    538     if (TIFFFieldSet(tif,FIELD_TRANSFERFUNCTION)) {
+    539             fprintf(fd, "  Transfer Function: ");
+    540             if (flags & TIFFPRINT_CURVES) {
+    541                     fprintf(fd, "\n");
+    542                     n = 1L<<td->td_bitspersample;
+    543                     for (l = 0; l < n; l++) {
+    544                             uint16 i;
+    545                             fprintf(fd, "    %2ld: %5u",
+    546                                 l, td->td_transferfunction[0][l]);
+    547                             for (i = 1; i < td->td_samplesperpixel; i++)
+    548                                     fprintf(fd, " %5u",
+    549                                         td->td_transferfunction[i][l]);
+    550                             fputc('\n', fd);
+    551                     }
+    552             } else
+    553                     fprintf(fd, "(present)\n");
+    554     }
+    555     if (TIFFFieldSet(tif, FIELD_SUBIFD) && (td->td_subifd)) {
+    556             uint16 i;
+    557             fprintf(fd, "  SubIFD Offsets:");
+    558             for (i = 0; i < td->td_nsubifd; i++)
+    559 #if defined(__WIN32__) && (defined(_MSC_VER) || defined(__MINGW32__))
+    560                     fprintf(fd, " %5I64u",
+    561                             (unsigned __int64) td->td_subifd[i]);
+    562 #else
+    563                     fprintf(fd, " %5llu",
+    564                             (unsigned long long) td->td_subifd[i]);
+    565 #endif
+    566             fputc('\n', fd);
+    567     }
+    568 
+    569     /*
+    570     ** Custom tag support.
+    571     */
+    572     {
+    573             int  i;
+    574             short count;
+    575 
+    576             count = (short) TIFFGetTagListCount(tif);
+    577             for(i = 0; i < count; i++) {
+    578                     uint32 tag = TIFFGetTagListEntry(tif, i);
+    579                     const TIFFField *fip;
+    580                     uint32 value_count;
+    581                     int mem_alloc = 0;
+    582                     void *raw_data;
+    583 
+    584                     fip = TIFFFieldWithTag(tif, tag);
+    585                     if(fip == NULL)
+    586                             continue;
+    587 
+    588                     if(fip->field_passcount) {
+    589                             if (fip->field_readcount == TIFF_VARIABLE2 ) {
+    590                                     if(TIFFGetField(tif, tag, &value_count, &raw_data) != 1)
+    591                                             continue;
+    592                             } else if (fip->field_readcount == TIFF_VARIABLE ) {
+    593                                     uint16 small_value_count;
+    594                                     if(TIFFGetField(tif, tag, &small_value_count, &raw_data) != 1)
+    595                                             continue;
+    596                                     value_count = small_value_count;
+    597                             } else {
+    598                                     assert (fip->field_readcount == TIFF_VARIABLE
+    599                                             || fip->field_readcount == TIFF_VARIABLE2);
+    600                                     continue;
+    601                             } 
+    602                     } else {
+    603                             if (fip->field_readcount == TIFF_VARIABLE
+    604                                 || fip->field_readcount == TIFF_VARIABLE2)
+    605                                     value_count = 1;
+    606                             else if (fip->field_readcount == TIFF_SPP)
+    607                                     value_count = td->td_samplesperpixel;
+    608                             else
+    609                                     value_count = fip->field_readcount;
+    610                             if (fip->field_tag == TIFFTAG_DOTRANGE
+    611                                 && strcmp(fip->field_name,"DotRange") == 0) {
+    612                                     /* TODO: This is an evil exception and should not have been
+    613                                        handled this way ... likely best if we move it into
+    614                                        the directory structure with an explicit field in 
+    615                                        libtiff 4.1 and assign it a FIELD_ value */
+    616                                     static uint16 dotrange[2];
+    617                                     raw_data = dotrange;
+    618                                     TIFFGetField(tif, tag, dotrange+0, dotrange+1);
+    619                             } else if (fip->field_type == TIFF_ASCII
+    620                                        || fip->field_readcount == TIFF_VARIABLE
+    621                                        || fip->field_readcount == TIFF_VARIABLE2
+    622                                        || fip->field_readcount == TIFF_SPP
+    623                                        || value_count > 1) {
+    624                                     if(TIFFGetField(tif, tag, &raw_data) != 1)
+    625                                             continue;
+    626                             } else {
+    627                                     raw_data = _TIFFmalloc(
+    628                                         _TIFFDataSize(fip->field_type)
+    629                                         * value_count);
+    630                                     mem_alloc = 1;
+    631                                     if(TIFFGetField(tif, tag, raw_data) != 1) {
+    632                                             _TIFFfree(raw_data);
+    633                                             continue;
+    634                                     }
+    635                             }
+    636                     }
+    637 
+    638                     /*
+    639                      * Catch the tags which needs to be specially handled
+    640                      * and pretty print them. If tag not handled in
+    641                      * _TIFFPrettyPrintField() fall down and print it as
+    642                      * any other tag.
+    643                      */
+    644                     if (!_TIFFPrettyPrintField(tif, fip, fd, tag, value_count, raw_data))
+    645                             _TIFFPrintField(fd, fip, value_count, raw_data);
+    646 
+    647                     if(mem_alloc)
+    648                             _TIFFfree(raw_data);
+    649             }
+    650     }
+    651         
+    652     if (tif->tif_tagmethods.printdir)
+    653             (*tif->tif_tagmethods.printdir)(tif, fd, flags);
+    654 
+    655     if ((flags & TIFFPRINT_STRIPS) &&
+    656         TIFFFieldSet(tif,FIELD_STRIPOFFSETS)) {
+    657             uint32 s;
+    658 
+    659             fprintf(fd, "  %lu %s:\n",
+    660                 (unsigned long) td->td_nstrips,
+    661                 isTiled(tif) ? "Tiles" : "Strips");
+    662             for (s = 0; s < td->td_nstrips; s++)
+    663 #if defined(__WIN32__) && (defined(_MSC_VER) || defined(__MINGW32__))
+    664                     fprintf(fd, "    %3lu: [%8I64u, %8I64u]\n",
+    665                         (unsigned long) s,
+    666                         (unsigned __int64) TIFFGetStrileOffset(tif, s),
+    667                         (unsigned __int64) TIFFGetStrileByteCount(tif, s));
+    668 #else
+    669                     fprintf(fd, "    %3lu: [%8llu, %8llu]\n",
+    670                         (unsigned long) s,
+    671                         (unsigned long long) TIFFGetStrileOffset(tif, s),
+    672                         (unsigned long long) TIFFGetStrileByteCount(tif, s));
+    673 #endif
+    674     }
+    675 }
+
+    Patch:
+    -				 for (i = 1; i < td->td_samplesperpixel; i++)
+    +                for (i = 1; i < td->td_samplesperpixel - td->td_extrasamples && i < 3; i++)
+    
+
+
+Steps for triggering condition generation:
+    1. Identify and output each conditional statement along with its code location.
+        i == sizeof(td->td_transferfunction) / sizeof(*td->td_transferfunction) || i == (td->td_samplesperpixel - td->td_extrasamples)), line 547 in tif_print.c
+    2. If multiple conditional statements across different locations are required, assign an execution order to each group.
+        i == sizeof(td->td_transferfunction) / sizeof(*td->td_transferfunction) || i == (td->td_samplesperpixel - td->td_extrasamples)), line 547 in tif_print.c, 0
+    3. For any complex conditional statements, decompose them into atomic conditional statements, and assign a conjunct identifier to each one for later reconstruction.
+        < i == sizeof(td->td_transferfunction) / sizeof(*td->td_transferfunction), line 547 in tif_print.c, 0, 0 >, < i == (td->td_samplesperpixel - td->td_extrasamples)), line 547 in tif_print.c,0, 1 >
+    4. Finally, output all triggering conditions in the form of tuples: <cond, loc, seq, conj>
+       < i == sizeof(td->td_transferfunction) / sizeof(*td->td_transferfunction), line 547 in tif_print.c, 0, 0 >, < i == (td->td_samplesperpixel - td->td_extrasamples)), line 547 in tif_print.c,0, 1 >

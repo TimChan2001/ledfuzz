@@ -1,0 +1,45 @@
+Vulnerability Type: null-pointer-dereference
+Crash/Trigger Point(s): in TIFFWriteDirectoryTagTransferfunction tif_dirwrite.c:2102:8
+Bug Call Trace:
+    AddressSanitizer:DEADLYSIGNAL
+    =================================================================
+    ==983150==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x7f398261ba6a bp 0x7ffef3f64f80 sp 0x7ffef3f64718 T0)
+    ==983150==The signal is caused by a READ memory access.
+    ==983150==Hint: address points to the zero page.
+        #0 0x7f398261ba69  (/lib/x86_64-linux-gnu/libc.so.6+0x18aa69)
+        #1 0x433b64 in MemcmpInterceptorCommon(void*, int (*)(void const*, void const*, unsigned long), void const*, void const*, unsigned long) (/magma_out/tiffcp+0x433b64)
+        #2 0x433eda in memcmp (/magma_out/tiffcp+0x433eda)
+        #3 0x53160b in TIFFWriteDirectoryTagTransferfunction /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c:2102:8
+        #4 0x53160b in TIFFWriteDirectorySec /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c:687:10
+        #5 0x53c47e in TIFFRewriteDirectory /magma/targets/libtiff/repo/libtiff/tif_dirwrite.c
+        #6 0x547daa in TIFFFlush /magma/targets/libtiff/repo/libtiff/tif_flush.c:53:13
+        #7 0x4d83a3 in TIFFCleanup /magma/targets/libtiff/repo/libtiff/tif_close.c:51:3
+        #8 0x4d8d68 in TIFFClose /magma/targets/libtiff/repo/libtiff/tif_close.c:126:2
+        #9 0x4c8713 in main /magma/targets/libtiff/repo/tools/tiffcp.c
+        #10 0x7f39824b2c86 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x21c86)
+        #11 0x41c759 in _start (/magma_out/tiffcp+0x41c759)
+
+    AddressSanitizer can not provide additional info.
+    SUMMARY: AddressSanitizer: SEGV (/lib/x86_64-linux-gnu/libc.so.6+0x18aa69) 
+    ==983150==ABORTING
+
+Patch:
+    diff --git a/libtiff/tif_dirwrite.c b/libtiff/tif_dirwrite.c
+    index 9e4d306..98d6e1a 100644
+    --- a/libtiff/tif_dirwrite.c
+    +++ b/libtiff/tif_dirwrite.c
+    @@ ... @@ TIFFWriteDirectoryTagTransferfunction(TIFF* tif, uint32* ndir, TIFFDirEntry* dir
+            
+    +       if (tif->tif_dir.td_transferfunction[2] == NULL ||
+    +           !_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[2],m*sizeof(uint16)))
+    -		if (!_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[2],m*sizeof(uint16)))
+                n=2;
+        }
+        if (n==2)
+        {
+    +       if (tif->tif_dir.td_transferfunction[1] == NULL ||
+    +           !_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[1],m*sizeof(uint16)))
+    -		if (!_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[1],m*sizeof(uint16)))
+                n=1;
+        }
+        if (n==0)

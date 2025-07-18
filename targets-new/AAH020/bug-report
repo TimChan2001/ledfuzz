@@ -1,0 +1,52 @@
+Vulnerability Type: buffer-overflow
+Crash/Trigger Point(s): in _TIFFVSetField at tif_dir.c:479
+Bug Call Trace:
+    #1  0x00000000004d55dd in _TIFFVSetField (tif=<optimized out>, tag=277, ap=<optimized out>) at tif_dir.c:479
+    #2  0x00000000005db620 in OJPEGVSetField (tif=0x61a000000080, tag=1, ap=0x3cf2) at tif_ojpeg.c:601
+    #3  0x00000000004cde0e in TIFFVSetField (tif=0x61a000000080, tag=277, ap=0x7fff76d91c40) at tif_dir.c:903
+    #4  0x00000000004cdd13 in TIFFSetField (tif=0x61a000000080, tag=1) at tif_dir.c:847
+    #5  0x00000000004ef676 in TIFFReadDirectory (tif=<optimized out>) at tif_dirread.c:4138
+    #6  0x000000000054c239 in TIFFClientOpen (name=<optimized out>, mode=<optimized out>, clientdata=<optimized out>, readproc=<optimized out>, writeproc=<optimized out>, 
+        seekproc=<optimized out>, closeproc=<optimized out>, sizeproc=<optimized out>, mapproc=<optimized out>, unmapproc=<optimized out>) at tif_open.c:483
+    #7  0x00000000004cb2c5 in _tiffStreamOpen (name=0x639ec0 <str> "MemTIFF", mode=0x63a1c0 <str> "rm", fd=0x7fff76d921a0) at tif_stream.cxx:384
+    #8  0x00000000004cb541 in TIFFStreamOpen (name=0x63bb00 <str> "AAH020", is=0x3cf2) at tif_stream.cxx:423
+    #9  0x00000000004c9695 in LLVMFuzzerTestOneInput (Data=0x613000000040 "II*", Size=<optimized out>) at contrib/oss-fuzz/tiff_read_rgba_fuzzer.cc:56
+    #10 0x00000000006238b4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #11 0x0000000000622b41 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    --- a/libtiff/tif_dir.c
+    +++ b/libtiff/tif_dir.c
+    @@ ... @@ setExtraSamples(TIFF* tif, va_list ap, uint32* v)
+                    return 0;
+            }
+        }
+    -
+    +#ifdef MAGMA_ENABLE_FIXES
+            if ( td->td_transferfunction[0] != NULL && (td->td_samplesperpixel - *v > 1) &&
+                    !(td->td_samplesperpixel - td->td_extrasamples > 1))
+            {
+    @@ ... @@ setExtraSamples(TIFF* tif, va_list ap, uint32* v)
+                    _TIFFfree(td->td_transferfunction[0]);
+                    td->td_transferfunction[0] = NULL;
+            }
+    +#endif
+    
+        td->td_extrasamples = (uint16) *v;
+        _TIFFsetShortArray(&td->td_sampleinfo, va, td->td_extrasamples);
+    @@ ... @@ _TIFFVSetField(TIFF* tif, uint32 tag, va_list ap)
+                goto badvalue;
+            if( v != td->td_samplesperpixel )
+            {
+    +#ifdef MAGMA_ENABLE_FIXES
+                /* See http://bugzilla.maptools.org/show_bug.cgi?id=2500 */
+                if( td->td_sminsamplevalue != NULL )
+                {
+    @@ -301,6 +307,13 @@ _TIFFVSetField(TIFF* tif, uint32 tag, va_list ap)
+                        _TIFFfree(td->td_transferfunction[0]);
+                        td->td_transferfunction[0] = NULL;
+                }
+    +#endif
+            }
+            td->td_samplesperpixel = (uint16) v;
+            break;

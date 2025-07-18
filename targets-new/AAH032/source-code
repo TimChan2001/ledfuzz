@@ -1,0 +1,117 @@
+In parser.c:
+10290 /**
+10291  * xmlParseEncodingDecl:
+10292  * @ctxt:  an XML parser context
+10293  *
+10294  * parse the XML encoding declaration
+10295  *
+10296  * [80] EncodingDecl ::= S 'encoding' Eq ('"' EncName '"' |  "'" EncName "'")
+10297  *
+10298  * this setups the conversion filters.
+10299  *
+10300  * Returns the encoding value or NULL
+10301  */
+10302 
+10303 const xmlChar *
+10304 xmlParseEncodingDecl(xmlParserCtxtPtr ctxt) {
+10305     xmlChar *encoding = NULL;
+10306 
+10307     SKIP_BLANKS;
+10308     if (CMP8(CUR_PTR, 'e', 'n', 'c', 'o', 'd', 'i', 'n', 'g')) {
+10309   SKIP(8);
+10310   SKIP_BLANKS;
+10311   if (RAW != '=') {
+10312       xmlFatalErr(ctxt, XML_ERR_EQUAL_REQUIRED, NULL);
+10313       return(NULL);
+10314         }
+10315   NEXT;
+10316   SKIP_BLANKS;
+10317   if (RAW == '"') {
+10318       NEXT;
+10319       encoding = xmlParseEncName(ctxt);
+10320       if (RAW != '"') {
+10321           xmlFatalErr(ctxt, XML_ERR_STRING_NOT_CLOSED, NULL);
+10322           xmlFree((xmlChar *) encoding);
+10323           return(NULL);
+10324       } else
+10325           NEXT;
+10326   } else if (RAW == '\''){
+10327       NEXT;
+10328       encoding = xmlParseEncName(ctxt);
+10329       if (RAW != '\'') {
+10330           xmlFatalErr(ctxt, XML_ERR_STRING_NOT_CLOSED, NULL);
+10331           xmlFree((xmlChar *) encoding);
+10332           return(NULL);
+10333       } else
+10334           NEXT;
+10335   } else {
+10336       xmlFatalErr(ctxt, XML_ERR_STRING_NOT_STARTED, NULL);
+10337   }
+10338 
+10339         /*
+10340          * Non standard parsing, allowing the user to ignore encoding
+10341          */
+10342         if (ctxt->options & XML_PARSE_IGNORE_ENC) {
+10343       xmlFree((xmlChar *) encoding);
+10344             return(NULL);
+10345   }
+10346 
+10347   /*
+10348    * UTF-16 encoding switch has already taken place at this stage,
+10349    * more over the little-endian/big-endian selection is already done
+10350    */
+10351         if ((encoding != NULL) &&
+10352       ((!xmlStrcasecmp(encoding, BAD_CAST "UTF-16")) ||
+10353        (!xmlStrcasecmp(encoding, BAD_CAST "UTF16")))) {
+10354       /*
+10355        * If no encoding was passed to the parser, that we are
+10356        * using UTF-16 and no decoder is present i.e. the
+10357        * document is apparently UTF-8 compatible, then raise an
+10358        * encoding mismatch fatal error
+10359        */
+10360       if ((ctxt->encoding == NULL) &&
+10361           (ctxt->input->buf != NULL) &&
+10362           (ctxt->input->buf->encoder == NULL)) {
+10363           xmlFatalErrMsg(ctxt, XML_ERR_INVALID_ENCODING,
+10364             "Document labelled UTF-16 but has UTF-8 content\n");
+10365       }
+10366       if (ctxt->encoding != NULL)
+10367           xmlFree((xmlChar *) ctxt->encoding);
+10368       ctxt->encoding = encoding;
+10369   }
+10370   /*
+10371    * UTF-8 encoding is handled natively
+10372    */
+10373         else if ((encoding != NULL) &&
+10374       ((!xmlStrcasecmp(encoding, BAD_CAST "UTF-8")) ||
+10375        (!xmlStrcasecmp(encoding, BAD_CAST "UTF8")))) {
+10376       if (ctxt->encoding != NULL)
+10377           xmlFree((xmlChar *) ctxt->encoding);
+10378       ctxt->encoding = encoding;
+10379   }
+10380   else if (encoding != NULL) {
+10381       xmlCharEncodingHandlerPtr handler;
+10382 
+10383       if (ctxt->input->encoding != NULL)
+10384           xmlFree((xmlChar *) ctxt->input->encoding);
+10385       ctxt->input->encoding = encoding;
+10386 
+10387             handler = xmlFindCharEncodingHandler((const char *) encoding);
+10388       if (handler != NULL) {
+10389                 int m_tmp = xmlSwitchToEncoding(ctxt, handler);
+10390 #ifdef MAGMA_ENABLE_FIXES
+10391           if (m_tmp < 0) {
+10392               /* failed to convert */
+10393               ctxt->errNo = XML_ERR_UNSUPPORTED_ENCODING;
+10394               return(NULL);
+10395           }
+10396 #endif
+10397       } else {
+10398           xmlFatalErrMsgStr(ctxt, XML_ERR_UNSUPPORTED_ENCODING,
+10399                   "Unsupported encoding %s\n", encoding);
+10400           return(NULL);
+10401       }
+10402   }
+10403     }
+10404     return(encoding);
+10405 }

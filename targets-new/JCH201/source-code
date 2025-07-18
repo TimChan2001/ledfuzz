@@ -1,0 +1,32 @@
+In XRef.cc:
+1613 XRefEntry *XRef::getEntry(int i, bool complainIfMissing)
+1614 {
+1615     if (i >= size || entries[i].type == xrefEntryNone) {
+1616 
+1617         if ((!xRefStream) && mainXRefEntriesOffset) {
+1618 
+1619             if (!parseEntry(mainXRefEntriesOffset + 20 * i, &entries[i])) {
+1620                 error(errSyntaxError, -1, "Failed to parse XRef entry [{0:d}].", i);
+1621                 return &dummyXRefEntry;
+1622             }
+1623         } else {
+1624             // Read XRef tables until the entry we're looking for is found
+1625             readXRefUntil(i);
+1626 
+1627             // We might have reconstructed the xref
+1628             // Check again i is in bounds
+1629             if (unlikely(i >= size)) {
+1630                 return &dummyXRefEntry;
+1631             }
+1632 
+1633             if (entries[i].type == xrefEntryNone) {
+1634                 if (complainIfMissing) {
+1635                     error(errSyntaxError, -1, "Invalid XRef entry {0:d}", i);
+1636                 }
+1637                 entries[i].type = xrefEntryFree;
+1638             }
+1639         }
+1640     }
+1641 
+1642     return &entries[i];
+1643 }

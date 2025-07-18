@@ -1,0 +1,493 @@
+In exif.c:
+1439 /* {{{ php_ifd_get32u
+1440  * Convert a 32 bit unsigned value from file's native byte order */
+1441 static unsigned php_ifd_get32u(void *void_value, int motorola_intel)
+1442 {
+1443    uchar *value = (uchar *) void_value;
+1444    if (motorola_intel) {
+1445            return  ((unsigned)value[0] << 24)
+1446                      | ((unsigned)value[1] << 16)
+1447                      | ((unsigned)value[2] << 8 )
+1448                      | ((unsigned)value[3]      );
+1449    } else {
+1450            return  ((unsigned)value[3] << 24)
+1451                      | ((unsigned)value[2] << 16)
+1452                      | ((unsigned)value[1] << 8 )
+1453                      | ((unsigned)value[0]      );
+1454    }
+1455 }
+1456 /* }}} */
+
+3145 /* {{{ exif_process_IFD_in_MAKERNOTE
+3146  * Process nested IFDs directories in Maker Note. */
+3147 static bool exif_process_IFD_in_MAKERNOTE(image_info_type *ImageInfo, char * value_ptr, int value_len, const exif_offset_info *info, size_t displacement)
+3148 {
+3149    size_t i;
+3150    int de, section_index = SECTION_MAKERNOTE;
+3151    int NumDirEntries, old_motorola_intel;
+3152    const maker_note_type *maker_note;
+3153    char *dir_start;
+3154    exif_offset_info new_info;
+3155 
+3156    for (i=0; i<=sizeof(maker_note_array)/sizeof(maker_note_type); i++) {
+3157            if (i==sizeof(maker_note_array)/sizeof(maker_note_type)) {
+3158 #ifdef EXIF_DEBUG
+3159                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "No maker note data found. Detected maker: %s (length = %d)", ImageInfo->make, ImageInfo->make ? strlen(ImageInfo->make) : 0);
+3160 #endif
+3161                    /* unknown manufacturer, not an error, use it as a string */
+3162                    return true;
+3163            }
+3164 
+3165            maker_note = maker_note_array+i;
+3166 
+3167            if (maker_note->make && (!ImageInfo->make || strcmp(maker_note->make, ImageInfo->make)))
+3168                    continue;
+3169            if (maker_note->id_string && value_len >= maker_note->id_string_len
+3170                            && strncmp(maker_note->id_string, value_ptr, maker_note->id_string_len))
+3171                    continue;
+3172            break;
+3173    }
+3174 
+3175 
+3176 
+3177 
+3178 
+3179 
+3180 
+3181 
+3182 
+3183    if (maker_note->offset >= value_len) {
+3184            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "IFD data too short: 0x%04X offset 0x%04X", value_len, maker_note->offset);
+3185            return true;
+3186    }
+3187 
+3188 
+3189 
+3190 
+3191 
+3192 
+3193 
+3194 
+3195    dir_start = value_ptr + maker_note->offset;
+3196 
+3197 #ifdef EXIF_DEBUG
+3198    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Process %s @x%04X + 0x%04X=%d: %s", exif_get_sectionname(section_index), (intptr_t)dir_start-(intptr_t)info->offset_base+maker_note->offset+displacement, value_len, value_len, exif_char_dump(value_ptr, value_len, (intptr_t)dir_start-(intptr_t)info->offset_base+maker_note->offset+displacement));
+3199 #endif
+3200 
+3201    ImageInfo->sections_found |= FOUND_MAKERNOTE;
+3202 
+3203    old_motorola_intel = ImageInfo->motorola_intel;
+3204    switch (maker_note->byte_order) {
+3205            case MN_ORDER_INTEL:
+3206                    ImageInfo->motorola_intel = 0;
+3207                    break;
+3208            case MN_ORDER_MOTOROLA:
+3209                    ImageInfo->motorola_intel = 1;
+3210                    break;
+3211            default:
+3212            case MN_ORDER_NORMAL:
+3213                    break;
+3214    }
+3215 
+3216    NumDirEntries = php_ifd_get16u(dir_start, ImageInfo->motorola_intel);
+3217 
+3218    /* It can be that motorola_intel is wrongly mapped, let's try inverting it */
+3219    if ((2+NumDirEntries*12) > value_len) {
+3220            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Potentially invalid endianess, trying again with different endianness before imminent failure.");
+3221 
+3222            ImageInfo->motorola_intel = ImageInfo->motorola_intel == 0 ? 1 : 0;
+3223            NumDirEntries = php_ifd_get16u(dir_start, ImageInfo->motorola_intel);
+3224    }
+3225 
+3226    if ((2+NumDirEntries*12) > value_len) {
+3227            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Illegal IFD size: 2 + 0x%04X*12 = 0x%04X > 0x%04X", NumDirEntries, 2+NumDirEntries*12, value_len);
+3228            return false;
+3229    }
+3230 
+3231 
+3232 
+3233 
+3234 
+3235 
+3236 
+3237 
+3238 
+3239 
+3240 
+3241 
+3242    switch (maker_note->offset_mode) {
+3243            case MN_OFFSET_MAKER:
+3244                    exif_offset_info_init(&new_info, value_ptr, value_ptr, value_len);
+3245                    info = &new_info;
+3246                    break;
+3247            default:
+3248            case MN_OFFSET_NORMAL:
+3249                    break;
+3250    }
+3251 
+3252    for (de=0;de<NumDirEntries;de++) {
+3253            size_t offset = 2 + 12 * de;
+3254            if (!exif_process_IFD_TAG(ImageInfo, dir_start + offset,
+3255                                                              info, displacement, section_index, 0, maker_note->tag_table)) {
+3256                    return false;
+3257            }
+3258    }
+3259    ImageInfo->motorola_intel = old_motorola_intel;
+3260 /* NextDirOffset (must be NULL) = php_ifd_get32u(dir_start+2+12*de, ImageInfo->motorola_intel);*/
+3261 #ifdef EXIF_DEBUG
+3262    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Subsection %s done", exif_get_sectionname(SECTION_MAKERNOTE));
+3263 #endif
+3264    return true;
+3265 }
+3266 /* }}} */
+3267 
+3268 #define REQUIRE_NON_EMPTY() do { \
+3269    if (byte_count == 0) { \
+3270            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Process tag(x%04X=%s): Cannot be empty", tag, exif_get_tagname_debug(tag, tag_table)); \
+3271            return false; \
+3272    } \
+3273 } while (0)
+3274 
+3275 
+3276 /* {{{ exif_process_IFD_TAG
+3277  * Process one of the nested IFDs directories. */
+3278 static bool exif_process_IFD_TAG_impl(image_info_type *ImageInfo, char *dir_entry, const exif_offset_info *info, size_t displacement, int section_index, int ReadNextIFD, tag_table_type tag_table)
+3279 {
+3280    size_t length;
+3281    unsigned int tag, format, components;
+3282    char *value_ptr, tagname[64], cbuf[32], *outside=NULL;
+3283    size_t byte_count, offset_val, fpos, fgot;
+3284    int64_t byte_count_signed;
+3285    xp_field_type *tmp_xp;
+3286 #ifdef EXIF_DEBUG
+3287    char *dump_data;
+3288    int dump_free;
+3289 #endif /* EXIF_DEBUG */
+3290 
+3291    tag = php_ifd_get16u(dir_entry, ImageInfo->motorola_intel);
+3292    format = php_ifd_get16u(dir_entry+2, ImageInfo->motorola_intel);
+3293    components = php_ifd_get32u(dir_entry+4, ImageInfo->motorola_intel);
+3294 
+3295    if (!format || format > NUM_FORMATS) {
+3296            /* (-1) catches illegal zero case as unsigned underflows to positive large. */
+3297            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Process tag(x%04X=%s): Illegal format code 0x%04X, suppose BYTE", tag, exif_get_tagname_debug(tag, tag_table), format);
+3298            format = TAG_FMT_BYTE;
+3299    }
+3300 
+3301    byte_count_signed = (int64_t)components * php_tiff_bytes_per_format[format];
+3302 
+3303    if (byte_count_signed < 0 || (byte_count_signed > INT32_MAX)) {
+3304            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Process tag(x%04X=%s): Illegal byte_count", tag, exif_get_tagname_debug(tag, tag_table));
+3305            return false;
+3306    }
+3307 
+3308    byte_count = (size_t)byte_count_signed;
+3309 
+3310    if (byte_count > 4) {
+3311            /* If its bigger than 4 bytes, the dir entry contains an offset. */
+3312            offset_val = php_ifd_get32u(dir_entry+8, ImageInfo->motorola_intel);
+3313            value_ptr = exif_offset_info_try_get(info, offset_val, byte_count);
+3314            if (!value_ptr) {
+3315                    /* It is important to check for IMAGE_FILETYPE_TIFF
+3316                     * JPEG does not use absolute pointers instead its pointers are
+3317                     * relative to the start of the TIFF header in APP1 section. */
+3318                    // TODO: Shouldn't we also be taking "displacement" into account here?
+3319                    if (byte_count > ImageInfo->FileSize || offset_val>ImageInfo->FileSize-byte_count || (ImageInfo->FileType!=IMAGE_FILETYPE_TIFF_II && ImageInfo->FileType!=IMAGE_FILETYPE_TIFF_MM && ImageInfo->FileType!=IMAGE_FILETYPE_JPEG)) {
+3320                            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Process tag(x%04X=%s): Illegal pointer offset(x%04X + x%04X = x%04X > x%04X)", tag, exif_get_tagname_debug(tag, tag_table), offset_val, byte_count, offset_val+byte_count, ImageInfo->FileSize);
+3321                            return false;
+3322                    }
+3323                    if (byte_count>sizeof(cbuf)) {
+3324                            /* mark as outside range and get buffer */
+3325                            value_ptr = safe_emalloc(byte_count, 1, 0);
+3326                            outside = value_ptr;
+3327                    } else {
+3328                            /* In most cases we only access a small range so
+3329                             * it is faster to use a static buffer there
+3330                             * BUT it offers also the possibility to have
+3331                             * pointers read without the need to free them
+3332                             * explicitley before returning. */
+3333                            memset(&cbuf, 0, sizeof(cbuf));
+3334                            value_ptr = cbuf;
+3335                    }
+3336 
+3337                    fpos = php_stream_tell(ImageInfo->infile);
+3338                    php_stream_seek(ImageInfo->infile, displacement+offset_val, SEEK_SET);
+3339                    fgot = php_stream_tell(ImageInfo->infile);
+3340                    if (fgot!=displacement+offset_val) {
+3341                            EFREE_IF(outside);
+3342                            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_WARNING, "Wrong file pointer: 0x%08X != 0x%08X", fgot, displacement+offset_val);
+3343                            return false;
+3344                    }
+3345                    fgot = php_stream_read(ImageInfo->infile, value_ptr, byte_count);
+3346                    php_stream_seek(ImageInfo->infile, fpos, SEEK_SET);
+3347                    if (fgot != byte_count) {
+3348                            EFREE_IF(outside);
+3349                            EXIF_ERRLOG_FILEEOF(ImageInfo)
+3350                            return false;
+3351                    }
+3352            }
+3353    } else {
+3354            /* 4 bytes or less and value is in the dir entry itself */
+3355            value_ptr = dir_entry+8;
+3356            // TODO: This is dubious, but the value is only used for debugging.
+3357            offset_val = value_ptr-info->offset_base;
+3358    }
+3359 
+3360    ImageInfo->sections_found |= FOUND_ANY_TAG;
+3361 #ifdef EXIF_DEBUG
+3362    dump_data = exif_dump_data(&dump_free, format, components, ImageInfo->motorola_intel, value_ptr);
+3363    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE,
+3364            "Process tag(x%04X=%s,@x%04X + x%04X(=%d)): %s%s %s",
+3365            tag, exif_get_tagname_debug(tag, tag_table), offset_val+displacement, byte_count, byte_count, (components>1)&&format!=TAG_FMT_UNDEFINED&&format!=TAG_FMT_STRING?"ARRAY OF ":"", exif_get_tagformat(format), dump_data);
+3366    if (dump_free) {
+3367            efree(dump_data);
+3368    }
+3369 #endif
+3370 
+3371    /* NB: The following code may not assume that there is at least one component!
+3372     * byte_count may be zero! */
+3373 
+3374    if (section_index==SECTION_THUMBNAIL) {
+3375            if (!ImageInfo->Thumbnail.data) {
+3376                    REQUIRE_NON_EMPTY();
+3377                    switch(tag) {
+3378                            case TAG_IMAGEWIDTH:
+3379                            case TAG_COMP_IMAGE_WIDTH:
+3380                                    ImageInfo->Thumbnail.width = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3381                                    break;
+3382 
+3383                            case TAG_IMAGEHEIGHT:
+3384                            case TAG_COMP_IMAGE_HEIGHT:
+3385                                    ImageInfo->Thumbnail.height = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3386                                    break;
+3387 
+3388                            case TAG_STRIP_OFFSETS:
+3389                            case TAG_JPEG_INTERCHANGE_FORMAT:
+3390                                    /* accept both formats */
+3391                                    ImageInfo->Thumbnail.offset = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3392                                    break;
+3393 
+3394                            case TAG_STRIP_BYTE_COUNTS:
+3395                                    if (ImageInfo->FileType == IMAGE_FILETYPE_TIFF_II || ImageInfo->FileType == IMAGE_FILETYPE_TIFF_MM) {
+3396                                            ImageInfo->Thumbnail.filetype = ImageInfo->FileType;
+3397                                    } else {
+3398                                            /* motorola is easier to read */
+3399                                            ImageInfo->Thumbnail.filetype = IMAGE_FILETYPE_TIFF_MM;
+3400                                    }
+3401                                    ImageInfo->Thumbnail.size = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3402                                    break;
+3403 
+3404                            case TAG_JPEG_INTERCHANGE_FORMAT_LEN:
+3405                                    if (ImageInfo->Thumbnail.filetype == IMAGE_FILETYPE_UNKNOWN) {
+3406                                            ImageInfo->Thumbnail.filetype = IMAGE_FILETYPE_JPEG;
+3407                                            ImageInfo->Thumbnail.size = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3408                                    }
+3409                                    break;
+3410                    }
+3411            }
+3412    } else {
+3413            if (section_index==SECTION_IFD0 || section_index==SECTION_EXIF)
+3414            switch(tag) {
+3415                    case TAG_COPYRIGHT:
+3416                            /* check for "<photographer> NUL <editor> NUL" */
+3417                            if (byte_count>1 && (length=php_strnlen(value_ptr, byte_count)) > 0) {
+3418                                    if (length<byte_count-1) {
+3419                                            /* When there are any characters after the first NUL */
+3420                                            EFREE_IF(ImageInfo->CopyrightPhotographer);
+3421                                            EFREE_IF(ImageInfo->CopyrightEditor);
+3422                                            EFREE_IF(ImageInfo->Copyright);
+3423                                            ImageInfo->CopyrightPhotographer  = estrdup(value_ptr);
+3424                                            ImageInfo->CopyrightEditor        = estrndup(value_ptr+length+1, byte_count-length-1);
+3425                                            spprintf(&ImageInfo->Copyright, 0, "%s, %s", ImageInfo->CopyrightPhotographer, ImageInfo->CopyrightEditor);
+3426                                            /* format = TAG_FMT_UNDEFINED; this mustn't be ASCII         */
+3427                                            /* but we are not supposed to change this                   */
+3428                                            /* keep in mind that image_info does not store editor value */
+3429                                    } else {
+3430                                            EFREE_IF(ImageInfo->Copyright);
+3431                                            ImageInfo->Copyright = estrndup(value_ptr, byte_count);
+3432                                    }
+3433                            }
+3434                            break;
+3435 
+3436                    case TAG_USERCOMMENT:
+3437                            EFREE_IF(ImageInfo->UserComment);
+3438                            ImageInfo->UserComment = NULL;
+3439                            EFREE_IF(ImageInfo->UserCommentEncoding);
+3440                            ImageInfo->UserCommentEncoding = NULL;
+3441                            ImageInfo->UserCommentLength = exif_process_user_comment(ImageInfo, &(ImageInfo->UserComment), &(ImageInfo->UserCommentEncoding), value_ptr, byte_count);
+3442                            break;
+3443 
+3444                    case TAG_XP_TITLE:
+3445                    case TAG_XP_COMMENTS:
+3446                    case TAG_XP_AUTHOR:
+3447                    case TAG_XP_KEYWORDS:
+3448                    case TAG_XP_SUBJECT:
+3449                            tmp_xp = (xp_field_type*)safe_erealloc(ImageInfo->xp_fields.list, (ImageInfo->xp_fields.count+1), sizeof(xp_field_type), 0);
+3450                            ImageInfo->sections_found |= FOUND_WINXP;
+3451                            ImageInfo->xp_fields.list = tmp_xp;
+3452                            ImageInfo->xp_fields.count++;
+3453                            exif_process_unicode(ImageInfo, &(ImageInfo->xp_fields.list[ImageInfo->xp_fields.count-1]), tag, value_ptr, byte_count);
+3454                            break;
+3455 
+3456                    case TAG_FNUMBER:
+3457                            /* Simplest way of expressing aperture, so I trust it the most.
+3458                               (overwrite previously computed value if there is one) */
+3459                            REQUIRE_NON_EMPTY();
+3460                            ImageInfo->ApertureFNumber = (float)exif_convert_any_format(value_ptr, format, ImageInfo->motorola_intel);
+3461                            break;
+3462 
+3463                    case TAG_APERTURE:
+3464                    case TAG_MAX_APERTURE:
+3465                            /* More relevant info always comes earlier, so only use this field if we don't
+3466                               have appropriate aperture information yet. */
+3467                            if (ImageInfo->ApertureFNumber == 0) {
+3468                                    REQUIRE_NON_EMPTY();
+3469                                    ImageInfo->ApertureFNumber
+3470                                            = expf(exif_convert_any_format(value_ptr, format, ImageInfo->motorola_intel)*logf(2.0)*0.5);
+3471                            }
+3472                            break;
+3473 
+3474                    case TAG_SHUTTERSPEED:
+3475                            /* More complicated way of expressing exposure time, so only use
+3476                               this value if we don't already have it from somewhere else.
+3477                               SHUTTERSPEED comes after EXPOSURE TIME
+3478                              */
+3479                            if (ImageInfo->ExposureTime == 0) {
+3480                                    REQUIRE_NON_EMPTY();
+3481                                    ImageInfo->ExposureTime
+3482                                            = expf(-exif_convert_any_format(value_ptr, format, ImageInfo->motorola_intel)*logf(2.0));
+3483                            }
+3484                            break;
+3485                    case TAG_EXPOSURETIME:
+3486                            ImageInfo->ExposureTime = -1;
+3487                            break;
+3488 
+3489                    case TAG_COMP_IMAGE_WIDTH:
+3490                            REQUIRE_NON_EMPTY();
+3491                            ImageInfo->ExifImageWidth = exif_convert_any_to_int(value_ptr, exif_rewrite_tag_format_to_unsigned(format), ImageInfo->motorola_intel);
+3492                            break;
+3493 
+3494                    case TAG_FOCALPLANE_X_RES:
+3495                            REQUIRE_NON_EMPTY();
+3496                            ImageInfo->FocalplaneXRes = exif_convert_any_format(value_ptr, format, ImageInfo->motorola_intel);
+3497                            break;
+3498 
+3499                    case TAG_SUBJECT_DISTANCE:
+3500                            /* Inidcates the distacne the autofocus camera is focused to.
+3501                               Tends to be less accurate as distance increases. */
+3502                            REQUIRE_NON_EMPTY();
+3503                            ImageInfo->Distance = (float)exif_convert_any_format(value_ptr, format, ImageInfo->motorola_intel);
+3504                            break;
+3505 
+3506                    case TAG_FOCALPLANE_RESOLUTION_UNIT:
+3507                            REQUIRE_NON_EMPTY();
+3508                            switch (exif_convert_any_to_int(value_ptr, format, ImageInfo->motorola_intel)) {
+3509                                    case 1: ImageInfo->FocalplaneUnits = 25.4; break; /* inch */
+3510                                    case 2:
+3511                                            /* According to the information I was using, 2 measn meters.
+3512                                               But looking at the Cannon powershot's files, inches is the only
+3513                                               sensible value. */
+3514                                            ImageInfo->FocalplaneUnits = 25.4;
+3515                                            break;
+3516 
+3517                                    case 3: ImageInfo->FocalplaneUnits = 10;   break;  /* centimeter */
+3518                                    case 4: ImageInfo->FocalplaneUnits = 1;    break;  /* milimeter  */
+3519                                    case 5: ImageInfo->FocalplaneUnits = .001; break;  /* micrometer */
+3520                            }
+3521                            break;
+3522 
+3523                    case TAG_SUB_IFD:
+3524                            if (format==TAG_FMT_IFD) {
+3525                                    /* If this is called we are either in a TIFFs thumbnail or a JPEG where we cannot handle it */
+3526                                    /* TIFF thumbnail: our data structure cannot store a thumbnail of a thumbnail */
+3527                                    /* JPEG do we have the data area and what to do with it */
+3528                                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Skip SUB IFD");
+3529                            }
+3530                            break;
+3531 
+3532                    case TAG_MAKE:
+3533                            EFREE_IF(ImageInfo->make);
+3534                            ImageInfo->make = estrndup(value_ptr, byte_count);
+3535                            break;
+3536                    case TAG_MODEL:
+3537                            EFREE_IF(ImageInfo->model);
+3538                            ImageInfo->model = estrndup(value_ptr, byte_count);
+3539                            break;
+3540 
+3541                    case TAG_MAKER_NOTE:
+3542                            if (!exif_process_IFD_in_MAKERNOTE(ImageInfo, value_ptr, byte_count, info, displacement)) {
+3543                                    EFREE_IF(outside);
+3544                                    return false;
+3545                            }
+3546                            break;
+3547 
+3548                    case TAG_EXIF_IFD_POINTER:
+3549                    case TAG_GPS_IFD_POINTER:
+3550                    case TAG_INTEROP_IFD_POINTER:
+3551                            if (ReadNextIFD) {
+3552                                    REQUIRE_NON_EMPTY();
+3553                                    char *Subdir_start;
+3554                                    int sub_section_index = 0;
+3555                                    switch(tag) {
+3556                                            case TAG_EXIF_IFD_POINTER:
+3557 #ifdef EXIF_DEBUG
+3558                                                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Found EXIF");
+3559 #endif
+3560                                                    ImageInfo->sections_found |= FOUND_EXIF;
+3561                                                    sub_section_index = SECTION_EXIF;
+3562                                                    break;
+3563                                            case TAG_GPS_IFD_POINTER:
+3564 #ifdef EXIF_DEBUG
+3565                                                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Found GPS");
+3566 #endif
+3567                                                    ImageInfo->sections_found |= FOUND_GPS;
+3568                                                    sub_section_index = SECTION_GPS;
+3569                                                    break;
+3570                                            case TAG_INTEROP_IFD_POINTER:
+3571 #ifdef EXIF_DEBUG
+3572                                                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Found INTEROPERABILITY");
+3573 #endif
+3574                                                    ImageInfo->sections_found |= FOUND_INTEROP;
+3575                                                    sub_section_index = SECTION_INTEROP;
+3576                                                    break;
+3577                                    }
+3578                                    offset_val = php_ifd_get32u(value_ptr, ImageInfo->motorola_intel);
+3579                                    Subdir_start = exif_offset_info_try_get(info, offset_val, 0);
+3580                                    if (!Subdir_start) {
+3581                                            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Illegal IFD Pointer");
+3582                                            EFREE_IF(outside);
+3583                                            return false;
+3584                                    }
+3585                                    if (!exif_process_IFD_in_JPEG(ImageInfo, Subdir_start, info, displacement, sub_section_index, tag)) {
+3586                                            EFREE_IF(outside);
+3587                                            return false;
+3588                                    }
+3589 #ifdef EXIF_DEBUG
+3590                                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Subsection %s done", exif_get_sectionname(sub_section_index));
+3591 #endif
+3592                            }
+3593            }
+3594    }
+3595    exif_iif_add_tag(ImageInfo, section_index, exif_get_tagname_key(tag, tagname, sizeof(tagname), tag_table), tag, format, components, value_ptr, byte_count);
+3596    EFREE_IF(outside);
+3597    return true;
+3598 }
+3599 /* }}} */
+3600 
+3601 static bool exif_process_IFD_TAG(image_info_type *ImageInfo, char *dir_entry, const exif_offset_info *info, size_t displacement, int section_index, int ReadNextIFD, tag_table_type tag_table)
+3602 {
+3603    bool result;
+3604    /* Protect against corrupt headers */
+3605    if (ImageInfo->ifd_count++ > MAX_IFD_TAGS) {
+3606            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "corrupt EXIF header: maximum IFD tag count reached");
+3607            return false;
+3608    }
+3609    if (ImageInfo->ifd_nesting_level > MAX_IFD_NESTING_LEVEL) {
+3610            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "corrupt EXIF header: maximum directory nesting level reached");
+3611            return false;
+3612    }
+3613    ImageInfo->ifd_nesting_level++;
+3614    result = exif_process_IFD_TAG_impl(ImageInfo, dir_entry, info, displacement, section_index, ReadNextIFD, tag_table);
+3615    ImageInfo->ifd_nesting_level--;
+3616    return result;
+3617 }

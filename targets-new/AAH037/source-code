@@ -1,0 +1,86 @@
+In parser.c:
+9653 /**
+9654  * xmlParseEndTag2:
+9655  * @ctxt:  an XML parser context
+9656  * @line:  line of the start tag
+9657  * @nsNr:  number of namespaces on the start tag
+9658  *
+9659  * parse an end of tag
+9660  *
+9661  * [42] ETag ::= '</' Name S? '>'
+9662  *
+9663  * With namespace
+9664  *
+9665  * [NS 9] ETag ::= '</' QName S? '>'
+9666  */
+9667 
+9668 static void
+9669 xmlParseEndTag2(xmlParserCtxtPtr ctxt, const xmlChar *prefix,
+9670                 const xmlChar *URI, int line, int nsNr, int tlen) {
+9671     const xmlChar *name;
+9672     size_t curLength;
+9673 
+9674     GROW;
+9675     if ((RAW != '<') || (NXT(1) != '/')) {
+9676    xmlFatalErr(ctxt, XML_ERR_LTSLASH_REQUIRED, NULL);
+9677    return;
+9678     }
+9679     SKIP(2);
+9680 
+9681     curLength = ctxt->input->end - ctxt->input->cur;
+9682     if ((tlen > 0) && (xmlStrncmp(ctxt->input->cur, ctxt->name, tlen) == 0)) {
+9683         if (ctxt->input->cur[tlen] == '>') {
+9684        ctxt->input->cur += tlen + 1;
+9685        ctxt->input->col += tlen + 1;
+9686        goto done;
+9687    }
+9688    ctxt->input->cur += tlen;
+9689    ctxt->input->col += tlen;
+9690    name = (xmlChar*)1;
+9691     } else {
+9692    if (prefix == NULL)
+9693        name = xmlParseNameAndCompare(ctxt, ctxt->name);
+9694    else
+9695        name = xmlParseQNameAndCompare(ctxt, ctxt->name, prefix);
+9696     }
+9697 
+9698     /*
+9699      * We should definitely be at the ending "S? '>'" part
+9700      */
+9701     GROW;
+9702     if (ctxt->instate == XML_PARSER_EOF)
+9703         return;
+9704     SKIP_BLANKS;
+9705     if ((!IS_BYTE_CHAR(RAW)) || (RAW != '>')) {
+9706    xmlFatalErr(ctxt, XML_ERR_GT_REQUIRED, NULL);
+9707     } else
+9708    NEXT1;
+9709 
+9710     /*
+9711      * [ WFC: Element Type Match ]
+9712      * The Name in an element's end-tag must match the element type in the
+9713      * start-tag.
+9714      *
+9715      */
+9716     if (name != (xmlChar*)1) {
+9717         if (name == NULL) name = BAD_CAST "unparsable";
+9718         if ((line == 0) && (ctxt->node != NULL))
+9719             line = ctxt->node->line;
+9720         xmlFatalErrMsgStrIntStr(ctxt, XML_ERR_TAG_NAME_MISMATCH,
+9721                 "Opening and ending tag mismatch: %s line %d and %s\n",
+9722                            ctxt->name, line, name);
+9723     }
+9724 
+9725     /*
+9726      * SAX: End of Tag
+9727      */
+9728 done:
+9729     if ((ctxt->sax != NULL) && (ctxt->sax->endElementNs != NULL) &&
+9730    (!ctxt->disableSAX))
+9731    ctxt->sax->endElementNs(ctxt->userData, ctxt->name, prefix, URI);
+9732 
+9733     spacePop(ctxt);
+9734     if (nsNr != 0)
+9735    nsPop(ctxt, nsNr);
+9736     return;
+9737 }

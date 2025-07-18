@@ -1,0 +1,30 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in xmlParseInternalSubset at parser.c:8362
+Bug Call Trace:
+        #1  0x000000000052aa85 in xmlParseInternalSubset (ctxt=<optimized out>) at parser.c:8362
+        #2  0x000000000052907b in xmlParseDocument (ctxt=0x617000000080) at parser.c:10728
+        #3  0x0000000000544f42 in xmlDoRead (ctxt=0x617000000080, URL=0x91bec0 <str> "noname.xml", encoding=<optimized out>, options=<optimized out>, reuse=0) at parser.c:15114
+        #4  0x00000000005452ff in xmlReadMemory (buffer=<optimized out>, size=<optimized out>, URL=0x91bec0 <str> "noname.xml", encoding=0x0, options=0) at parser.c:15200
+        #5  0x00000000004c82ba in LLVMFuzzerTestOneInput (
+        data=0x6120000001c0 "<?xml version=\"1.0\"?>\n<!DOCTYPE doc [\n<!ELEMENT doc (#PCDAT\301)>\n<!ATTLIST doc At NMTOKEN \"$$$\">\n<!ATTLIST doc Ok NMTOKEN \"1abc_2\">\n<!ATTLIST doc bad IDREF \"1abc_2\">\n<!ATTLIST doc ok2 IDREF \"abc_2\">\n<!A"..., size=300) at /root/magma_trigger/targets/libxml2/src/libxml2_xml_read_memory_fuzzer.cc:35
+        #6  0x0000000000905854 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+        #7  0x0000000000904ae1 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+        diff --git a/parser.c b/parser.c
+        index 3f31329..4aea5b8 100644
+        --- a/parser.c
+        +++ b/parser.c
+        @@ -8311,10 +8311,20 @@ xmlParseInternalSubset(xmlParserCtxtPtr ctxt) {
+        /*
+        * We should be at the end of the DOCTYPE declaration.
+        */
+        +#ifdef MAGMA_ENABLE_FIXES
+        if (RAW != '>') {
+                xmlFatalErr(ctxt, XML_ERR_DOCTYPE_NOT_FINISHED, NULL);
+                return;
+        }
+        +#endif
+        NEXT;
+        }
+ 

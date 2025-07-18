@@ -1,0 +1,51 @@
+In tif_dirwrite.c:
+2072 static int
+2073 TIFFWriteDirectoryTagTransferfunction(TIFF* tif, uint32* ndir, TIFFDirEntry* dir)
+2074 {
+2075    static const char module[] = "TIFFWriteDirectoryTagTransferfunction";
+2076    uint32 m;
+2077    uint16 n;
+2078    uint16* o;
+2079    int p;
+2080    if (dir==NULL)
+2081    {
+2082            (*ndir)++;
+2083            return(1);
+2084    }
+2085    m=(1<<tif->tif_dir.td_bitspersample);
+2086    n=tif->tif_dir.td_samplesperpixel-tif->tif_dir.td_extrasamples;
+2087    /*
+2088     * Check if the table can be written as a single column,
+2089     * or if it must be written as 3 columns.  Note that we
+2090     * write a 3-column tag if there are 2 samples/pixel and
+2091     * a single column of data won't suffice--hmm.
+2092     */
+2093    if (n>3)
+2094            n=3;
+2095    if (n==3)
+2096    {
+2097            if (!_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[2],m*sizeof(uint16)))
+2098                    n=2;
+2099    }
+2100    if (n==2)
+2101    {
+2102            if (!_TIFFmemcmp(tif->tif_dir.td_transferfunction[0],tif->tif_dir.td_transferfunction[1],m*sizeof(uint16)))
+2103                    n=1;
+2104    }
+2105    if (n==0)
+2106            n=1;
+2107    o=_TIFFmalloc(n*m*sizeof(uint16));
+2108    if (o==NULL)
+2109    {
+2110            TIFFErrorExt(tif->tif_clientdata,module,"Out of memory");
+2111            return(0);
+2112    }
+2113    _TIFFmemcpy(&o[0],tif->tif_dir.td_transferfunction[0],m*sizeof(uint16));
+2114    if (n>1)
+2115            _TIFFmemcpy(&o[m],tif->tif_dir.td_transferfunction[1],m*sizeof(uint16));
+2116    if (n>2)
+2117            _TIFFmemcpy(&o[2*m],tif->tif_dir.td_transferfunction[2],m*sizeof(uint16));
+2118    p=TIFFWriteDirectoryTagCheckedShortArray(tif,ndir,dir,TIFFTAG_TRANSFERFUNCTION,n*m,o);
+2119    _TIFFfree(o);
+2120    return(p);
+2121 }

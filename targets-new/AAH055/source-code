@@ -1,0 +1,94 @@
+In a_int.c:
+91 static size_t i2c_ibuf(const unsigned char *b, size_t blen, int neg,
+92                        unsigned char **pp)
+93 {
+94     unsigned int pad = 0;
+95     size_t ret, i;
+96     unsigned char *p, pb = 0;
+97 
+98     if (b != NULL && blen) {
+99         ret = blen;
+100         i = b[0];
+101         if (!neg && (i > 127)) {
+102             pad = 1;
+103             pb = 0;
+104         } else if (neg) {
+105             pb = 0xFF;
+106             if (i > 128) {
+107                 pad = 1;
+108             } else if (i == 128) {
+109                 /*
+110                  * Special case [of minimal negative for given length]:
+111                  * if any other bytes non zero we pad, otherwise we don't.
+112                  */
+113                 for (pad = 0, i = 1; i < blen; i++)
+114                     pad |= b[i];
+115                 pb = pad != 0 ? 0xffU : 0;
+116                 pad = pb & 1;
+117             }
+118         }
+119         ret += pad;
+120     } else {
+121         ret = 1;
+122         blen = 0;   /* reduce '(b == NULL || blen == 0)' to '(blen == 0)' */
+123     }
+124 
+125     if (pp == NULL || (p = *pp) == NULL)
+126         return ret;
+127 
+128     /*
+129      * This magically handles all corner cases, such as '(b == NULL ||
+130      * blen == 0)', non-negative value, "negative" zero, 0x80 followed
+131      * by any number of zeros...
+132      */
+133     *p = pb;
+134     p += pad;       /* yes, p[0] can be written twice, but it's little
+135                      * price to pay for eliminated branches */
+136 #ifdef MAGMA_ENABLE_FIXES
+137     twos_complement(p, b, blen, pb);
+138 #else
+139     if (blen == 0)
+140         *(p++) = 0;
+141     else if (!neg)
+142         memcpy(p, b, (unsigned int)blen);
+143     else {
+144         /* Begin at the end of the encoding */
+145         const unsigned char *n = b + blen - 1;
+146         p += blen - 1;
+147         i = blen;
+148 
+149         /**
+150          * The representation of a negative zero is just all zeros. This routine
+151          * tries to optimize 2's complement by skipping all trailing zeros,
+152          * since trailing zeros are convserved by 2's complement. However, a
+153          * negative zero number is all trailing zeros. Thus, the routine will
+154          * underflow trying to skip them.
+155          */
+156 
+157         /* Copy zeros to destination as long as source is zero */
+158         while (!*n) {
+159             *(p--) = 0;
+160             n--;
+161             i--;
+162 #ifdef MAGMA_ENABLE_CANARIES
+163             /**
+164              * The value of `i` determines how many more iterations this loop
+165              * can perform before underflowing. Once `i` reaches zero, the next
+166              * iteration will result in dereferencing `n` outside the bounds of
+167              * `b`.
+168              */
+169             MAGMA_LOG("AAH055", i == 0);
+170 #endif
+171         }
+172         /* Complement and increment next octet */
+173         *(p--) = ((*(n--)) ^ 0xff) + 1;
+174         i--;
+175         /* Complement any octets left */
+176         for (; i > 0; i--)
+177             *(p--) = *(n--) ^ 0xff;
+178     }
+179 #endif
+180 
+181     *pp += ret;
+182     return ret;
+183 }

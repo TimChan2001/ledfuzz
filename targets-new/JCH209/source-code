@@ -1,0 +1,61 @@
+In Annot.cc:
+5893 void AnnotInk::draw(Gfx *gfx, bool printing)
+5894 {
+5895     double ca = 1;
+5896 
+5897     if (!isVisible(printing))
+5898         return;
+5899 
+5900     annotLocker();
+5901     if (appearance.isNull()) {
+5902         appearBBox = std::make_unique<AnnotAppearanceBBox>(rect.get());
+5903         ca = opacity;
+5904 
+5905         AnnotAppearanceBuilder appearBuilder;
+5906         appearBuilder.append("q\n");
+5907 
+5908         if (color) {
+5909             appearBuilder.setDrawColor(color.get(), false);
+5910         }
+5911 
+5912         appearBuilder.setLineStyleForBorder(border.get());
+5913         appearBBox->setBorderWidth(std::max(1., border->getWidth()));
+5914 
+5915         for (int i = 0; i < inkListLength; ++i) {
+5916             const AnnotPath *path = inkList[i];
+5917             if (path->getCoordsLength() != 0) {
+5918                 appearBuilder.appendf("{0:.2f} {1:.2f} m\n", path->getX(0) - rect->x1, path->getY(0) - rect->y1);
+5919                 appearBBox->extendTo(path->getX(0) - rect->x1, path->getY(0) - rect->y1);
+5920 
+5921                 for (int j = 1; j < path->getCoordsLength(); ++j) {
+5922                     appearBuilder.appendf("{0:.2f} {1:.2f} l\n", path->getX(j) - rect->x1, path->getY(j) - rect->y1);
+5923                     appearBBox->extendTo(path->getX(j) - rect->x1, path->getY(j) - rect->y1);
+5924                 }
+5925 
+5926                 appearBuilder.append("S\n");
+5927             }
+5928         }
+5929 
+5930         appearBuilder.append("Q\n");
+5931 
+5932         double bbox[4];
+5933         appearBBox->getBBoxRect(bbox);
+5934         if (ca == 1) {
+5935             appearance = createForm(appearBuilder.buffer(), bbox, false, nullptr);
+5936         } else {
+5937             Object aStream = createForm(appearBuilder.buffer(), bbox, true, nullptr);
+5938 
+5939             GooString appearBuf("/GS0 gs\n/Fm0 Do");
+5940             Dict *resDict = createResourcesDict("Fm0", std::move(aStream), "GS0", ca, nullptr);
+5941             appearance = createForm(&appearBuf, bbox, false, resDict);
+5942         }
+5943     }
+5944 
+5945     // draw the appearance stream
+5946     Object obj = appearance.fetch(gfx->getXRef());
+5947     if (appearBBox) {
+5948         gfx->drawAnnot(&obj, nullptr, color.get(), appearBBox->getPageXMin(), appearBBox->getPageYMin(), appearBBox->getPageXMax(), appearBBox->getPageYMax(), getRotation());
+5949     } else {
+5950         gfx->drawAnnot(&obj, nullptr, color.get(), rect->x1, rect->y1, rect->x2, rect->y2, getRotation());
+5951     }
+5952 }

@@ -1,0 +1,164 @@
+In parser.c:
+7835 /**
+7836  * xmlParsePEReference:
+7837  * @ctxt:  an XML parser context
+7838  *
+7839  * parse PEReference declarations
+7840  * The entity content is handled directly by pushing it's content as
+7841  * a new input stream.
+7842  *
+7843  * [69] PEReference ::= '%' Name ';'
+7844  *
+7845  * [ WFC: No Recursion ]
+7846  * A parsed entity must not contain a recursive
+7847  * reference to itself, either directly or indirectly.
+7848  *
+7849  * [ WFC: Entity Declared ]
+7850  * In a document without any DTD, a document with only an internal DTD
+7851  * subset which contains no parameter entity references, or a document
+7852  * with "standalone='yes'", ...  ... The declaration of a parameter
+7853  * entity must precede any reference to it...
+7854  *
+7855  * [ VC: Entity Declared ]
+7856  * In a document with an external subset or external parameter entities
+7857  * with "standalone='no'", ...  ... The declaration of a parameter entity
+7858  * must precede any reference to it...
+7859  *
+7860  * [ WFC: In DTD ]
+7861  * Parameter-entity references may only appear in the DTD.
+7862  * NOTE: misleading but this is handled.
+7863  */
+7864 void
+7865 xmlParsePEReference(xmlParserCtxtPtr ctxt)
+7866 {
+7867     const xmlChar *name;
+7868     xmlEntityPtr entity = NULL;
+7869     xmlParserInputPtr input;
+7870 
+7871     if (RAW != '%')
+7872         return;
+7873     NEXT;
+7874     name = xmlParseName(ctxt);
+7875     if (name == NULL) {
+7876    xmlFatalErrMsg(ctxt, XML_ERR_PEREF_NO_NAME, "PEReference: no name\n");
+7877    return;
+7878     }
+7879     if (xmlParserDebugEntities)
+7880    xmlGenericError(xmlGenericErrorContext,
+7881            "PEReference: %s\n", name);
+7882     if (RAW != ';') {
+7883    xmlFatalErr(ctxt, XML_ERR_PEREF_SEMICOL_MISSING, NULL);
+7884         return;
+7885     }
+7886 
+7887     NEXT;
+7888 
+7889     /*
+7890      * Increase the number of entity references parsed
+7891      */
+7892     ctxt->nbentities++;
+7893 
+7894     /*
+7895      * Request the entity from SAX
+7896      */
+7897     if ((ctxt->sax != NULL) &&
+7898    (ctxt->sax->getParameterEntity != NULL))
+7899    entity = ctxt->sax->getParameterEntity(ctxt->userData, name);
+7900     if (ctxt->instate == XML_PARSER_EOF)
+7901    return;
+7902     if (entity == NULL) {
+7903    /*
+7904     * [ WFC: Entity Declared ]
+7905     * In a document without any DTD, a document with only an
+7906     * internal DTD subset which contains no parameter entity
+7907     * references, or a document with "standalone='yes'", ...
+7908     * ... The declaration of a parameter entity must precede
+7909     * any reference to it...
+7910     */
+7911    if ((ctxt->standalone == 1) ||
+7912        ((ctxt->hasExternalSubset == 0) &&
+7913         (ctxt->hasPErefs == 0))) {
+7914        xmlFatalErrMsgStr(ctxt, XML_ERR_UNDECLARED_ENTITY,
+7915                          "PEReference: %%%s; not found\n",
+7916                          name);
+7917    } else {
+7918        /*
+7919         * [ VC: Entity Declared ]
+7920         * In a document with an external subset or external
+7921         * parameter entities with "standalone='no'", ...
+7922         * ... The declaration of a parameter entity must
+7923         * precede any reference to it...
+7924         */
+7925             if ((ctxt->validate) && (ctxt->vctxt.error != NULL)) {
+7926                 xmlValidityError(ctxt, XML_WAR_UNDECLARED_ENTITY,
+7927                                  "PEReference: %%%s; not found\n",
+7928                                  name, NULL);
+7929             } else
+7930                 xmlWarningMsg(ctxt, XML_WAR_UNDECLARED_ENTITY,
+7931                               "PEReference: %%%s; not found\n",
+7932                               name, NULL);
+7933             ctxt->valid = 0;
+7934    }
+7935    xmlParserEntityCheck(ctxt, 0, NULL, 0);
+7936     } else {
+7937    /*
+7938     * Internal checking in case the entity quest barfed
+7939     */
+7940    if ((entity->etype != XML_INTERNAL_PARAMETER_ENTITY) &&
+7941        (entity->etype != XML_EXTERNAL_PARAMETER_ENTITY)) {
+7942        xmlWarningMsg(ctxt, XML_WAR_UNDECLARED_ENTITY,
+7943              "Internal: %%%s; is not a parameter entity\n",
+7944                      name, NULL);
+7945    } else {
+7946             xmlChar start[4];
+7947             xmlCharEncoding enc;
+7948 
+7949 #ifdef MAGMA_ENABLE_FIXES
+7950        if ((entity->etype == XML_EXTERNAL_PARAMETER_ENTITY) &&
+7951            ((ctxt->options & XML_PARSE_NOENT) == 0) &&
+7952            ((ctxt->options & XML_PARSE_DTDVALID) == 0) &&
+7953            ((ctxt->options & XML_PARSE_DTDLOAD) == 0) &&
+7954            ((ctxt->options & XML_PARSE_DTDATTR) == 0) &&
+7955            (ctxt->replaceEntities == 0) &&
+7956            (ctxt->validate == 0))
+7957            return;
+7958 #endif
+7959        input = xmlNewEntityInputStream(ctxt, entity);
+7960        if (xmlPushInput(ctxt, input) < 0) {
+7961                 xmlFreeInputStream(input);
+7962            return;
+7963             }
+7964 
+7965        if (entity->etype == XML_EXTERNAL_PARAMETER_ENTITY) {
+7966                 /*
+7967                  * Get the 4 first bytes and decode the charset
+7968                  * if enc != XML_CHAR_ENCODING_NONE
+7969                  * plug some encoding conversion routines.
+7970                  * Note that, since we may have some non-UTF8
+7971                  * encoding (like UTF16, bug 135229), the 'length'
+7972                  * is not known, but we can calculate based upon
+7973                  * the amount of data in the buffer.
+7974                  */
+7975                 GROW
+7976                 if (ctxt->instate == XML_PARSER_EOF)
+7977                     return;
+7978                 if ((ctxt->input->end - ctxt->input->cur)>=4) {
+7979                     start[0] = RAW;
+7980                     start[1] = NXT(1);
+7981                     start[2] = NXT(2);
+7982                     start[3] = NXT(3);
+7983                     enc = xmlDetectCharEncoding(start, 4);
+7984                     if (enc != XML_CHAR_ENCODING_NONE) {
+7985                         xmlSwitchEncoding(ctxt, enc);
+7986                     }
+7987                 }
+7988 
+7989                 if ((CMP5(CUR_PTR, '<', '?', 'x', 'm', 'l')) &&
+7990                     (IS_BLANK_CH(NXT(5)))) {
+7991                     xmlParseTextDecl(ctxt);
+7992                 }
+7993             }
+7994    }
+7995     }
+7996     ctxt->hasPErefs = 1;
+7997 }
