@@ -968,7 +968,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
     }
   }
 
-  double conj_cal[8] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+  // double conj_cal[8] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+  double conj_cal[8] = {-DISTANCE_MAX, -DISTANCE_MAX, -DISTANCE_MAX, -DISTANCE_MAX,
+                        -DISTANCE_MAX, -DISTANCE_MAX, -DISTANCE_MAX, -DISTANCE_MAX};
 
   for (int i = 0; i < seq_num; i++) {
     if (*(trace_bits + MAP_SIZE + 24 + i) == 0) {
@@ -977,7 +979,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     }
     for (int j = 0; j < ins_num; j++) {
       if (ins[j] && seq[j] == i) {
-        if (conj_cal[conj[j]] == -1.0)
+        if (conj_cal[conj[j]] == -DISTANCE_MAX)
           conj_cal[conj[j]] = t_distance[j] * wei[j];
         else
           conj_cal[conj[j]] += t_distance[j] * wei[j];
@@ -985,10 +987,10 @@ static inline u8 has_new_bits(u8* virgin_map) {
     }
     double min_conj = conj_cal[0];
     for (int j = 1; j < 8; j++)
-      if (conj_cal[j] >= 0 && conj_cal[j] < min_conj) min_conj = conj_cal[j];
+      if (conj_cal[j] != -DISTANCE_MAX && conj_cal[j] < min_conj) min_conj = conj_cal[j];
 
-    if (min_conj > 0) triggering_distance += min_conj;
-    for (int j = 0; j < 8; j++) conj_cal[j] = -1.0;
+    if (min_conj != -DISTANCE_MAX) triggering_distance += min_conj;
+    for (int j = 0; j < 8; j++) conj_cal[j] = -DISTANCE_MAX;
   }
 
   if (cur_distance != -1.0) {
