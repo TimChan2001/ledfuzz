@@ -956,6 +956,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   u8 conj[8];
   double wei[8];
   u8 ins[8];
+  triggering_distance = -DBL_MAX;
 
   for (int i = 0; i < ins_num; i++) {
     ins[i] = *(trace_bits + MAP_SIZE + 16 + i);
@@ -979,9 +980,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
     for (int j = 0; j < ins_num; j++) {
       if (ins[j] && seq[j] == i) {
         if (conj_cal[conj[j]] == -DBL_MAX)
-          conj_cal[conj[j]] = t_distance[j] * wei[j];
+          conj_cal[conj[j]] = t_distance[j] / wei[j];
         else
-          conj_cal[conj[j]] += t_distance[j] * wei[j];
+          conj_cal[conj[j]] += t_distance[j] / wei[j];
       }
     }
     double min_conj = conj_cal[0];
@@ -992,7 +993,6 @@ static inline u8 has_new_bits(u8* virgin_map) {
     for (int j = 0; j < 8; j++) conj_cal[j] = -DBL_MAX;
   }
 
-  if(!reach_tag) triggering_distance = -DBL_MAX;
 
 #else
 
