@@ -1,0 +1,12 @@
+In v3_addr.c:
+
+83 /*
+84  * Extract the AFI from an IPAddressFamily.
+85  */
+86 unsigned int X509v3_addr_get_afi(const IPAddressFamily *f)
+87 {
+88     return ((f != NULL &&
+89             f->addressFamily != NULL && f->addressFamily->data != NULL)
+90             ? ((f->addressFamily->data[0] << 8) | (f->addressFamily->data[1]))
+91             : 0);
+92 }

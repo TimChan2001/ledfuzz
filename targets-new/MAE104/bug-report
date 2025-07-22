@@ -1,0 +1,39 @@
+Vulnerability Type: While parsing an IPAddressFamily extension in an X.509 certificate, it is possible to do a one-byte overread. This would result in an incorrect text display of the certificate. This bug has been present since 2006 and is present in all versions of OpenSSL before 1.0.2m and 1.1.0g.
+Crash/Trigger Point(s): in X509v3_addr_get_afi v3_addr.c:90
+Bug Call Trace:
+
+    #1  0x00000000008e7267 in X509v3_addr_get_afi (f=0x6020000002b0) at crypto/x509/v3_addr.c:90
+    #2  0x00000000008efb14 in i2r_IPAddrBlocks (method=<optimized out>, ext=<optimized out>, out=0x60c000000400, indent=16) at crypto/x509/v3_addr.c:226
+    #3  0x000000000050c4b9 in X509V3_EXT_print (out=<optimized out>, ext=<optimized out>, flag=<optimized out>, indent=<optimized out>) at crypto/x509/v3_prn.c:124
+    #4  0x000000000050d028 in X509V3_extensions_print (bp=0x60c000000400, title=<optimized out>, exts=0x603000012a60, flag=0, indent=<optimized out>)
+        at crypto/x509/v3_prn.c:169
+    #5  0x0000000000507b54 in X509_print_ex (bp=<optimized out>, x=<optimized out>, nmflags=140734170747040, cflag=<optimized out>) at crypto/x509/t_x509.c:201
+    #6  0x000000000050834e in X509_print (bp=0xcf2e40 <str>, x=0x1) at crypto/x509/t_x509.c:45
+    #7  0x00000000004c8bec in FuzzerTestOneInput (buf=<optimized out>, len=<optimized out>) at fuzz/x509.c:37
+    #8  0x0000000000c67fa4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #9  0x0000000000c67231 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    --- a/crypto/x509/v3_addr.c
+    +++ b/crypto/x509/v3_addr.c
+    @@ -84,12 +84,31 @@ static int length_from_afi(const unsigned afi)
+    */
+    unsigned int X509v3_addr_get_afi(const IPAddressFamily *f)
+    {
+    +#ifdef MAGMA_ENABLE_FIXES
+        if (f == NULL
+                || f->addressFamily == NULL
+                || f->addressFamily->data == NULL
+                || f->addressFamily->length < 2)
+            return 0;
+        return (f->addressFamily->data[0] << 8) | f->addressFamily->data[1];
+    +#else
+    +    return ((f != NULL &&
+    +            f->addressFamily != NULL && f->addressFamily->data != NULL)
+    +            ? ((f->addressFamily->data[0] << 8) | (f->addressFamily->data[1]))
+    +            : 0);
+    +
+    +#endif
+    }
+    
+    /*

@@ -1,0 +1,49 @@
+Vulnerability Type: buffer overflow
+Crash/Trigger Point(s): in whereLoopAddBtreeIndex where.c:2784
+Bug Call Trace:
+    #1  0x00000000007bc6a5 in whereLoopAddBtreeIndex (pBuilder=<optimized out>, pSrc=<optimized out>, pProbe=<optimized out>, 
+        nInMul=<optimized out>) at where.c:2784
+    #2  0x00000000007ae3d8 in whereLoopAddBtree (pBuilder=<optimized out>, mPrereq=<optimized out>) at sqlite3.c:149334
+    #3  0x0000000000789a61 in whereLoopAddAll (pBuilder=<optimized out>) at sqlite3.c:149860
+    #4  0x0000000000768d8c in sqlite3WhereBegin (pParse=0x7ffdfafc23c0, pTabList=<optimized out>, pWhere=<optimized out>, pOrderBy=<optimized out>, 
+        pResultSet=<optimized out>, wctrlFlags=<optimized out>, iAuxArg=<optimized out>) at sqlite3.c:151129
+    #5  0x00000000006bb468 in sqlite3Select (pParse=<optimized out>, p=<optimized out>, pDest=<optimized out>) at sqlite3.c:136119
+    #6  0x0000000000697ae4 in yy_reduce (yypParser=0x7ffdfafc1810, yyruleno=<optimized out>, yyLookahead=<optimized out>, yyLookaheadToken=..., 
+        pParse=<optimized out>) at sqlite3.c:158628
+    #7  0x000000000069517a in sqlite3Parser (yyp=0x7ffdfafc1810, yymajor=<optimized out>, yyminor=...) at sqlite3.c:159928
+    #8  0x000000000050e1c0 in sqlite3RunParser (pParse=0x7ffdfafc23c0, 
+        zSql=0x61e0000001d7 "e=5;\n} {9}\n\n# Indexed expressions on both sides of an == in a WHERE clause.\n#\ndo_execsql_test indexexpr1-700 {\n  DROP TABLE IF EXISTS t7;\n  CREATE TABLE t7(a,b,c);\n  I6SERT INTO t7(a,b,c) VALUES(1,2,2"..., pzErrMsg=<optimized out>) at sqlite3.c:161211
+    #9  0x0000000000672978 in sqlite3Prepare (db=<optimized out>, zSql=<optimized out>, nBytes=<optimized out>, prepFlags=<optimized out>, 
+    --Type <RET> for more, q to quit, c to continue without paging--
+        pReprepare=<optimized out>, ppStmt=<optimized out>, pzTail=<optimized out>) at sqlite3.c:129510
+    #10 0x00000000005099fd in sqlite3LockAndPrepare (db=<optimized out>, 
+        zSql=0x61e0000001c0 "SELECT i FROM t4 WHEgE e=5;\n} {9}\n\n# Indexed expressions on both sides of an == in a WHERE clause.\n#\ndo_execsql_test indexexpr1-700 {\n  DROP TABLE IF EXISTS t7;\n  CREATE TABLE t7(a,b,c);\n  I6SERT INTO"..., nBytes=-1, prepFlags=128, pOld=0x0, 
+        ppStmt=0x7ffdfafc27a0, pzTail=0x7ffdfafc2780) at sqlite3.c:129582
+    #11 0x000000000050768f in sqlite3_prepare_v2 (db=0x8d4560 <str>, zSql=0x0, nBytes=-1084260084, ppStmt=0x7ffdfafc27a0, pzTail=<optimized out>)
+        at sqlite3.c:129667
+    #12 0x00000000005064c8 in sqlite3_exec (db=<optimized out>, 
+        zSql=0x61e0000001c0 "SELECT i FROM t4 WHEgE e=5;\n} {9}\n\n# Indexed expressions on both sides of an == in a WHERE clause.\n#\ndo_execsql_test indexexpr1-700 {\n  DROP TABLE IF EXISTS t7;\n  CREATE TABLE t7(a,b,c);\n  I6SERT INTO"..., xCallback=<optimized out>, pArg=<optimized out>, 
+        pzErrMsg=<optimized out>) at sqlite3.c:123977
+    #13 0x00000000004c4ab9 in LLVMFuzzerTestOneInput (
+        data=0x628000000100 "--CCCCCCCsqE IF EXINTS t4;\n  CREATE TABLE t4(a,b,c,d,e,f,g,h,i);\n  CREATE INDEX t4all ON t4(a,b,c<d,e,f,i,h);\n  INSERT INTO t4 VALUES(1,2,3,4,5,6,7,8,9);\n  ANALYZE;\n  DELETE FROM sqlite_stat1;\n  INSER"..., size=107614700568704)
+        at /root/magma_trigger/targets/sqlite3/repo/test/ossfuzz.c:183
+    --Type <RET> for more, q to quit, c to continue without paging--
+    #14 0x00000000008517f4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #15 0x0000000000850a81 in main (argc=2, argv=0x0) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/src/where.c b/src/where.c
+    index ad309006d..dcdd38d11 100644
+    --- a/src/where.c
+    +++ b/src/where.c
+    @@ -2761,8 +2761,13 @@ static int whereLoopAddBtreeIndex(
+        && pProbe->hasStat1!=0
+        && OptimizationEnabled(db, SQLITE_SkipScan)
+        && pProbe->aiRowLogEst[saved_nEq+1]>=42  /* TUNING: Minimum for skip-scan */
+    +#ifdef MAGMA_ENABLE_FIXES
+        && (rc = whereLoopResize(db, pNew, pNew->nLTerm+1))==SQLITE_OK
+    +#endif
+    ){
+        LogEst nIter;
+        pNew->u.btree.nEq++;
+        pNew->nSkip++;

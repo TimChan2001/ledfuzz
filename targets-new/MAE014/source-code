@@ -1,0 +1,113 @@
+In exif.c:
+
+3145 /* {{{ exif_process_IFD_in_MAKERNOTE
+3146  * Process nested IFDs directories in Maker Note. */
+3147 static bool exif_process_IFD_in_MAKERNOTE(image_info_type *ImageInfo, char * value_ptr, int value_len, const exif_offset_info *info, size_t displacement)
+3148 {
+3149    size_t i;
+3150    int de, section_index = SECTION_MAKERNOTE;
+3151    int NumDirEntries, old_motorola_intel;
+3152    const maker_note_type *maker_note;
+3153    char *dir_start;
+3154    exif_offset_info new_info;
+3155 
+3156    for (i=0; i<=sizeof(maker_note_array)/sizeof(maker_note_type); i++) {
+3157            if (i==sizeof(maker_note_array)/sizeof(maker_note_type)) {
+3158 #ifdef EXIF_DEBUG
+3159                    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "No maker note data found. Detected maker: %s (length = %d)", ImageInfo->make, ImageInfo->make ? strlen(ImageInfo->make) : 0);
+3160 #endif
+3161                    /* unknown manufacturer, not an error, use it as a string */
+3162                    return true;
+3163            }
+3164 
+3165            maker_note = maker_note_array+i;
+3166 
+3167            if (maker_note->make && (!ImageInfo->make || strcmp(maker_note->make, ImageInfo->make)))
+3168                    continue;
+3169            if (maker_note->id_string && value_len >= maker_note->id_string_len
+3170                            && strncmp(maker_note->id_string, value_ptr, maker_note->id_string_len))
+3171                    continue;
+3172            break;
+3173    }
+3174 
+3175 
+3176    if (maker_note->offset >= value_len) {
+3177            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "IFD data too short: 0x%04X offset 0x%04X", value_len, maker_note->offset);
+3178            return true;
+3179    }
+3180 
+3181 
+3182    dir_start = value_ptr + maker_note->offset;
+3183 
+3184 #ifdef EXIF_DEBUG
+3185    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Process %s @x%04X + 0x%04X=%d: %s", exif_get_sectionname(section_index), (intptr_t)dir_start-(intptr_t)info->offset_base+maker_note->offset+displacement, value_len, value_len, exif_char_dump(value_ptr, value_len, (intptr_t)dir_start-(intptr_t)info->offset_base+maker_note->offset+displacement));
+3186 #endif
+3187 
+3188    ImageInfo->sections_found |= FOUND_MAKERNOTE;
+3189 
+3190    old_motorola_intel = ImageInfo->motorola_intel;
+3191    switch (maker_note->byte_order) {
+3192            case MN_ORDER_INTEL:
+3193                    ImageInfo->motorola_intel = 0;
+3194                    break;
+3195            case MN_ORDER_MOTOROLA:
+3196                    ImageInfo->motorola_intel = 1;
+3197                    break;
+3198            default:
+3199            case MN_ORDER_NORMAL:
+3200                    break;
+3201    }
+3202 
+3203    NumDirEntries = php_ifd_get16u(dir_start, ImageInfo->motorola_intel);
+3204 
+3205    /* It can be that motorola_intel is wrongly mapped, let's try inverting it */
+3206    if ((2+NumDirEntries*12) > value_len) {
+3207            exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Potentially invalid endianess, trying again with different endianness before imminent failure.");
+3208 
+3209            ImageInfo->motorola_intel = ImageInfo->motorola_intel == 0 ? 1 : 0;
+3210            NumDirEntries = php_ifd_get16u(dir_start, ImageInfo->motorola_intel);
+3211    }
+3212 
+3213    if ((2+NumDirEntries*12) > value_len) {
+3214            exif_error_docref("exif_read_data#error_ifd" EXIFERR_CC, ImageInfo, E_WARNING, "Illegal IFD size: 2 + 0x%04X*12 = 0x%04X > 0x%04X", NumDirEntries, 2+NumDirEntries*12, value_len);
+3215            return false;
+3216    }
+3217 
+3218    switch (maker_note->offset_mode) {
+3219            case MN_OFFSET_MAKER:
+3220                    exif_offset_info_init(&new_info, value_ptr, value_ptr, value_len);
+3221                    info = &new_info;
+3222                    break;
+3223            default:
+3224            case MN_OFFSET_NORMAL:
+3225                    break;
+3226    }
+3227 
+3228    for (de=0;de<NumDirEntries;de++) {
+3229            size_t offset = 2 + 12 * de;
+3230            if (!exif_process_IFD_TAG(ImageInfo, dir_start + offset,
+3231                                                              info, displacement, section_index, 0, maker_note->tag_table)) {
+3232                    return false;
+3233            }
+3234    }
+3235    ImageInfo->motorola_intel = old_motorola_intel;
+3236 /* NextDirOffset (must be NULL) = php_ifd_get32u(dir_start+2+12*de, ImageInfo->motorola_intel);*/
+3237 #ifdef EXIF_DEBUG
+3238    exif_error_docref(NULL EXIFERR_CC, ImageInfo, E_NOTICE, "Subsection %s done", exif_get_sectionname(SECTION_MAKERNOTE));
+3239 #endif
+3240    return true;
+3241 }
+3242 /* }}} */
+
+In exif.c:
+/* {{{ php_ifd_get16u
+ * Convert a 16 bit unsigned value from file's native byte order */
+static int php_ifd_get16u(void *value, int motorola_intel)
+{
+	if (motorola_intel) {
+		return (((uchar *)value)[0] << 8) | ((uchar *)value)[1];
+	} else {
+		return (((uchar *)value)[1] << 8) | ((uchar *)value)[0];
+	}
+}
+/* }}} */

@@ -1,0 +1,46 @@
+Vulnerability Type: SQLite before 3.8.9 does not properly implement the dequoting of collation-sequence names, which allows context-dependent attackers to cause a denial of service (uninitialized memory access and application crash) or possibly have unspecified other impact via a crafted COLLATE clause, as demonstrated by COLLATE\"\"\"\"\"\"\"\" at the end of a SELECT statement.
+Crash/Trigger Point(s): in sqlite3ExprAddCollateToken expr.c:99
+Bug Call Trace:
+    #1  0x00000000006d7242 in sqlite3ExprAddCollateToken (pParse=0x7ffef888bd00, pExpr=0x62e00000b820, pCollName=0x7ffef888a4c0, dequote=0) at expr.c:99
+    #2  0x000000000073ac2f in sqlite3ExprAddCollateString (pParse=<optimized out>, pExpr=<optimized out>, zC=<optimized out>) at sqlite3.c:100284
+    #3  0x000000000078317a in multiSelectOrderByKeyInfo (pParse=<optimized out>, p=0x62e00000b920, nExtra=1) at sqlite3.c:132093
+    #4  0x0000000000780bf6 in multiSelectOrderBy (pParse=<optimized out>, p=0x62e00000b920, pDest=<optimized out>) at sqlite3.c:133075
+    #5  0x00000000007602a7 in multiSelect (pParse=<optimized out>, p=<optimized out>, pDest=<optimized out>) at sqlite3.c:132453
+    #6  0x00000000006b866c in sqlite3Select (pParse=<optimized out>, p=<optimized out>, pDest=<optimized out>) at sqlite3.c:135804
+    #7  0x0000000000697ad1 in yy_reduce (yypParser=0x7ffef888b150, yyruleno=<optimized out>, yyLookahead=<optimized out>, yyLookaheadToken=..., 
+        pParse=<optimized out>) at sqlite3.c:158630
+    #8  0x000000000069516a in sqlite3Parser (yyp=0x7ffef888b150, yymajor=<optimized out>, yyminor=...) at sqlite3.c:159930
+    #9  0x000000000050e1c0 in sqlite3RunParser (pParse=0x7ffef888bd00, zSql=0x608000000356 "TOLLATE noc , $l/t $ter/_e", pzErrMsg=<optimized out>) at sqlite3.c:161213
+    #10 0x0000000000672958 in sqlite3Prepare (db=<optimized out>, zSql=<optimized out>, nBytes=<optimized out>, prepFlags=<optimized out>, 
+        pReprepare=<optimized out>, ppStmt=<optimized out>, pzTail=<optimized out>) at sqlite3.c:129517
+    #11 0x00000000005099fd in sqlite3LockAndPrepare (db=<optimized out>, 
+        zSql=0x608000000320 "  SELECT  $nByte UNION SELECT  $n COLLAT ORDER BY  $n TOLLATE noc , $l/t $ter/_e", nBytes=-1, prepFlags=128, pOld=0x0, 
+    --Type <RET> for more, q to quit, c to continue without paging--
+        ppStmt=0x7ffef888c0e0, pzTail=0x7ffef888c0c0) at sqlite3.c:129589
+    #12 0x000000000050768f in sqlite3_prepare_v2 (db=0x8df800 <str>, zSql=0x1 <error: Cannot access memory at address 0x1>, nBytes=20572752, ppStmt=0x7ffef888c0e0, 
+        pzTail=<optimized out>) at sqlite3.c:129674
+    #13 0x00000000005064c8 in sqlite3_exec (db=<optimized out>, 
+        zSql=0x608000000320 "  SELECT  $nByte UNION SELECT  $n COLLAT ORDER BY  $n TOLLATE noc , $l/t $ter/_e", xCallback=<optimized out>, pArg=<optimized out>, 
+        pzErrMsg=<optimized out>) at sqlite3.c:123984
+    #14 0x00000000004c4aa9 in LLVMFuzzerTestOneInput (data=0x608000000122 "  SELECT  $nByte UNION SELECT  $n COLLAT ORDER BY  $n TOLLATE noc , $l/t $ter/_e", 
+        size=106102872081184) at /root/magma_trigger/targets/sqlite3/repo/test/ossfuzz.c:183
+    #15 0x00000000008519c4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #16 0x0000000000850c51 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/src/expr.c b/src/expr.c
+    index e58889737..20ba8144e 100644
+    --- a/src/expr.c
+    +++ b/src/expr.c
+    @@ -91,7 +91,14 @@ Expr *sqlite3ExprAddCollateToken(
+    int dequote              /* True to dequote pCollName */
+    ){
+    if( pCollName->n>0 ){
+    +#ifdef MAGMA_ENABLE_FIXES
+        Expr *pNew = sqlite3ExprAlloc(pParse->db, TK_COLLATE, pCollName, dequote);
+    +#else
+    +    Expr *pNew = sqlite3ExprAlloc(pParse->db, TK_COLLATE, pCollName, 1);
+    +#endif
+        if( pNew ){
+        pNew->pLeft = pExpr;
+        pNew->flags |= EP_Collate|EP_Skip;

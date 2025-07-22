@@ -1,0 +1,45 @@
+Vulnerability Type: exprListAppendList in window.c in SQLite 3.30.1 allows attackers to trigger an invalid pointer dereference because constant integer values in ORDER BY clauses of window definitions are mishandled.
+Crash/Trigger Point(s): in exprListAppendList window.c:899-915
+Bug Call Trace:
+
+    #1  0x0000000000779fce in exprListAppendList (pParse=<optimized out>, pList=0x0, pAppend=<optimized out>, bIntToNull=<optimized out>)
+        at sqlite3.c:152709
+    #2  0x000000000075aaa7 in sqlite3WindowRewrite (pParse=<optimized out>, p=<optimized out>) at sqlite3.c:152782
+    #3  0x00000000006b842f in sqlite3Select (pParse=<optimized out>, p=<optimized out>, pDest=<optimized out>) at sqlite3.c:135687
+    #4  0x0000000000697b14 in yy_reduce (yypParser=0x7ffd76f8f2f0, yyruleno=<optimized out>, yyLookahead=<optimized out>, yyLookaheadToken=..., 
+        pParse=<optimized out>) at sqlite3.c:158628
+    #5  0x00000000006951aa in sqlite3Parser (yyp=0x7ffd76f8f2f0, yymajor=<optimized out>, yyminor=...) at sqlite3.c:159928
+    #6  0x000000000050e1e0 in sqlite3RunParser (pParse=0x7ffd76f8fea0, 
+        zSql=0x60f000000170 "402-~444.5444444E4\200\064\064\064<02-~444.5444444E44444<02-144445442-~044.5444444E44444<02-144445444444<33\025\063\063\063\063\063\063\063\063\063\063\200", pzErrMsg=<optimized out>) at sqlite3.c:161211
+    #7  0x0000000000672998 in sqlite3Prepare (db=<optimized out>, zSql=<optimized out>, nBytes=<optimized out>, prepFlags=<optimized out>, 
+        pReprepare=<optimized out>, ppStmt=<optimized out>, pzTail=<optimized out>) at sqlite3.c:129510
+    #8  0x0000000000509a1d in sqlite3LockAndPrepare (db=<optimized out>, 
+        zSql=0x60f000000130 "--- y_acsql_ {\n  SELECT SUM(\"value\") OVER \n  (ORDER BY-14,44544)402-~444.5444444E4\200\064\064\064<02-~444.5444444E4--Type <RET> for more, q to quit, c to continue without paging--
+    4444<02-144445442-~044.5444444E44444<02-144445444444<33\025\063\063\063\063\063\063\063\063\063\063\200", nBytes=-1, prepFlags=128, pOld=0x0, 
+        ppStmt=0x7ffd76f90280, pzTail=0x7ffd76f90260) at sqlite3.c:129582
+    #9  0x00000000005076af in sqlite3_prepare_v2 (db=0x8cef60 <str>, zSql=0x0, nBytes=20573072, ppStmt=0x7ffd76f90280, pzTail=<optimized out>)
+        at sqlite3.c:129667
+    #10 0x00000000005064e8 in sqlite3_exec (db=<optimized out>, 
+        zSql=0x60f000000130 "--- y_acsql_ {\n  SELECT SUM(\"value\") OVER \n  (ORDER BY-14,44544)402-~444.5444444E4\200\064\064\064<02-~444.5444444E44444<02-144445442-~044.5444444E44444<02-144445444444<33\025\063\063\063\063\063\063\063\063\063\063\200", xCallback=<optimized out>, 
+        pArg=<optimized out>, pzErrMsg=<optimized out>) at sqlite3.c:123977
+    #11 0x00000000004c4ab9 in LLVMFuzzerTestOneInput (
+        data=0x622000000100 "--- y_acsql_ {\n  SELECT SUM(\"value\") OVER \n  (ORDER BY-14,44544)402-~444.5444444E4\200\064\064\064<02-~444.5444444E44444<02-144445442-~044.5444444E44444<02-144445444444<33\025\063\063\063\063\063\063\063\063\063\063\200", size=106583908417840)
+        at /root/magma_trigger/targets/sqlite3/repo/test/ossfuzz.c:183
+    #12 0x0000000000851a24 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #13 0x0000000000850cb1 in main (argc=2, argv=0x0) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/src/window.c b/src/window.c
+    index 77ec8a02e..c99e556ed 100644
+    --- a/src/window.c
+    +++ b/src/window.c
+    @@ -906,7 +906,12 @@ static ExprList *exprListAppendList(
+            if( sqlite3ExprIsInteger(pSub, &iDummy) ){
+            pSub->op = TK_NULL;
+            pSub->flags &= ~(EP_IntValue|EP_IsTrue|EP_IsFalse);
+    +#ifdef MAGMA_ENABLE_FIXES
+            pSub->u.zToken = 0;
+    +#endif
+            }
+        }
+        pList = sqlite3ExprListAppend(pParse, pList, pDup);

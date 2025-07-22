@@ -1,0 +1,390 @@
+In Where.c:
+
+2414 /*
+2415 ** We have so far matched pBuilder->pNew->u.btree.nEq terms of the 
+2416 ** index pIndex. Try to match one more.
+2417 **
+2418 ** When this function is called, pBuilder->pNew->nOut contains the 
+2419 ** number of rows expected to be visited by filtering using the nEq 
+2420 ** terms only. If it is modified, this value is restored before this 
+2421 ** function returns.
+2422 **
+2423 ** If pProbe->idxType==SQLITE_IDXTYPE_IPK, that means pIndex is 
+2424 ** a fake index used for the INTEGER PRIMARY KEY.
+2425 */
+2426 static int whereLoopAddBtreeIndex(
+2427   WhereLoopBuilder *pBuilder,     /* The WhereLoop factory */
+2428   struct SrcList_item *pSrc,      /* FROM clause term being analyzed */
+2429   Index *pProbe,                  /* An index on pSrc */
+2430   LogEst nInMul                   /* log(Number of iterations due to IN) */
+2431 ){
+2432   WhereInfo *pWInfo = pBuilder->pWInfo;  /* WHERE analyse context */
+2433   Parse *pParse = pWInfo->pParse;        /* Parsing context */
+2434   sqlite3 *db = pParse->db;       /* Database connection malloc context */
+2435   WhereLoop *pNew;                /* Template WhereLoop under construction */
+2436   WhereTerm *pTerm;               /* A WhereTerm under consideration */
+2437   int opMask;                     /* Valid operators for constraints */
+2438   WhereScan scan;                 /* Iterator for WHERE terms */
+2439   Bitmask saved_prereq;           /* Original value of pNew->prereq */
+2440   u16 saved_nLTerm;               /* Original value of pNew->nLTerm */
+2441   u16 saved_nEq;                  /* Original value of pNew->u.btree.nEq */
+2442   u16 saved_nBtm;                 /* Original value of pNew->u.btree.nBtm */
+2443   u16 saved_nTop;                 /* Original value of pNew->u.btree.nTop */
+2444   u16 saved_nSkip;                /* Original value of pNew->nSkip */
+2445   u32 saved_wsFlags;              /* Original value of pNew->wsFlags */
+2446   LogEst saved_nOut;              /* Original value of pNew->nOut */
+2447   int rc = SQLITE_OK;             /* Return code */
+2448   LogEst rSize;                   /* Number of rows in the table */
+2449   LogEst rLogSize;                /* Logarithm of table size */
+2450   WhereTerm *pTop = 0, *pBtm = 0; /* Top and bottom range constraints */
+2451 
+2452   pNew = pBuilder->pNew;
+2453   if( db->mallocFailed ) return SQLITE_NOMEM_BKPT;
+2454   WHERETRACE(0x800, ("BEGIN %s.addBtreeIdx(%s), nEq=%d, nSkip=%d, rRun=%d\n",
+2455                      pProbe->pTable->zName,pProbe->zName,
+2456                      pNew->u.btree.nEq, pNew->nSkip, pNew->rRun));
+2457 
+2458   assert( (pNew->wsFlags & WHERE_VIRTUALTABLE)==0 );
+2459   assert( (pNew->wsFlags & WHERE_TOP_LIMIT)==0 );
+2460   if( pNew->wsFlags & WHERE_BTM_LIMIT ){
+2461     opMask = WO_LT|WO_LE;
+2462   }else{
+2463     assert( pNew->u.btree.nBtm==0 );
+2464     opMask = WO_EQ|WO_IN|WO_GT|WO_GE|WO_LT|WO_LE|WO_ISNULL|WO_IS;
+2465   }
+2466   if( pProbe->bUnordered ) opMask &= ~(WO_GT|WO_GE|WO_LT|WO_LE);
+2467 
+2468   assert( pNew->u.btree.nEq<pProbe->nColumn );
+2469 
+2470   saved_nEq = pNew->u.btree.nEq;
+2471   saved_nBtm = pNew->u.btree.nBtm;
+2472   saved_nTop = pNew->u.btree.nTop;
+2473   saved_nSkip = pNew->nSkip;
+2474   saved_nLTerm = pNew->nLTerm;
+2475   saved_wsFlags = pNew->wsFlags;
+2476   saved_prereq = pNew->prereq;
+2477   saved_nOut = pNew->nOut;
+2478   pTerm = whereScanInit(&scan, pBuilder->pWC, pSrc->iCursor, saved_nEq,
+2479                         opMask, pProbe);
+2480   pNew->rSetup = 0;
+2481   rSize = pProbe->aiRowLogEst[0];
+2482   rLogSize = estLog(rSize);
+2483   for(; rc==SQLITE_OK && pTerm!=0; pTerm = whereScanNext(&scan)){
+2484     u16 eOp = pTerm->eOperator;   /* Shorthand for pTerm->eOperator */
+2485     LogEst rCostIdx;
+2486     LogEst nOutUnadjusted;        /* nOut before IN() and WHERE adjustments */
+2487     int nIn = 0;
+2488 #ifdef SQLITE_ENABLE_STAT4
+2489     int nRecValid = pBuilder->nRecValid;
+2490 #endif
+2491     if( (eOp==WO_ISNULL || (pTerm->wtFlags&TERM_VNULL)!=0)
+2492      && indexColumnNotNull(pProbe, saved_nEq)
+2493     ){
+2494       continue; /* ignore IS [NOT] NULL constraints on NOT NULL columns */
+2495     }
+2496     if( pTerm->prereqRight & pNew->maskSelf ) continue;
+2497 
+2498     /* Do not allow the upper bound of a LIKE optimization range constraint
+2499     ** to mix with a lower range bound from some other source */
+2500     if( pTerm->wtFlags & TERM_LIKEOPT && pTerm->eOperator==WO_LT ) continue;
+2501 
+2502     /* tag-20191211-001:  Do not allow constraints from the WHERE clause to
+2503     ** be used by the right table of a LEFT JOIN.  Only constraints in the
+2504     ** ON clause are allowed.  See tag-20191211-002 for the vtab equivalent. */
+2505     if( (pSrc->fg.jointype & JT_LEFT)!=0
+2506      && !ExprHasProperty(pTerm->pExpr, EP_FromJoin)
+2507     ){
+2508       continue;
+2509     }
+2510 
+2511     if( IsUniqueIndex(pProbe) && saved_nEq==pProbe->nKeyCol-1 ){
+2512       pBuilder->bldFlags1 |= SQLITE_BLDF1_UNIQUE;
+2513     }else{
+2514       pBuilder->bldFlags1 |= SQLITE_BLDF1_INDEXED;
+2515     }
+2516     pNew->wsFlags = saved_wsFlags;
+2517     pNew->u.btree.nEq = saved_nEq;
+2518     pNew->u.btree.nBtm = saved_nBtm;
+2519     pNew->u.btree.nTop = saved_nTop;
+2520     pNew->nLTerm = saved_nLTerm;
+2521     if( whereLoopResize(db, pNew, pNew->nLTerm+1) ) break; /* OOM */
+2522     pNew->aLTerm[pNew->nLTerm++] = pTerm;
+2523     pNew->prereq = (saved_prereq | pTerm->prereqRight) & ~pNew->maskSelf;
+2524 
+2525     assert( nInMul==0
+2526         || (pNew->wsFlags & WHERE_COLUMN_NULL)!=0 
+2527         || (pNew->wsFlags & WHERE_COLUMN_IN)!=0 
+2528         || (pNew->wsFlags & WHERE_SKIPSCAN)!=0 
+2529     );
+2530 
+2531     if( eOp & WO_IN ){
+2532       Expr *pExpr = pTerm->pExpr;
+2533       if( ExprHasProperty(pExpr, EP_xIsSelect) ){
+2534         /* "x IN (SELECT ...)":  TUNING: the SELECT returns 25 rows */
+2535         int i;
+2536         nIn = 46;  assert( 46==sqlite3LogEst(25) );
+2537 
+2538         /* The expression may actually be of the form (x, y) IN (SELECT...).
+2539         ** In this case there is a separate term for each of (x) and (y).
+2540         ** However, the nIn multiplier should only be applied once, not once
+2541         ** for each such term. The following loop checks that pTerm is the
+2542         ** first such term in use, and sets nIn back to 0 if it is not. */
+2543         for(i=0; i<pNew->nLTerm-1; i++){
+2544           if( pNew->aLTerm[i] && pNew->aLTerm[i]->pExpr==pExpr ) nIn = 0;
+2545         }
+2546       }else if( ALWAYS(pExpr->x.pList && pExpr->x.pList->nExpr) ){
+2547         /* "x IN (value, value, ...)" */
+2548         nIn = sqlite3LogEst(pExpr->x.pList->nExpr);
+2549       }
+2550       if( pProbe->hasStat1 && rLogSize>=10 ){
+2551         LogEst M, logK, safetyMargin;
+2552         /* Let:
+2553         **   N = the total number of rows in the table
+2554         **   K = the number of entries on the RHS of the IN operator
+2555         **   M = the number of rows in the table that match terms to the 
+2556         **       to the left in the same index.  If the IN operator is on
+2557         **       the left-most index column, M==N.
+2558         **
+2559         ** Given the definitions above, it is better to omit the IN operator
+2560         ** from the index lookup and instead do a scan of the M elements,
+2561         ** testing each scanned row against the IN operator separately, if:
+2562         **
+2563         **        M*log(K) < K*log(N)
+2564         **
+2565         ** Our estimates for M, K, and N might be inaccurate, so we build in
+2566         ** a safety margin of 2 (LogEst: 10) that favors using the IN operator
+2567         ** with the index, as using an index has better worst-case behavior.
+2568         ** If we do not have real sqlite_stat1 data, always prefer to use
+2569         ** the index.  Do not bother with this optimization on very small
+2570         ** tables (less than 2 rows) as it is pointless in that case.
+2571         */
+2572         M = pProbe->aiRowLogEst[saved_nEq];
+2573         logK = estLog(nIn);
+2574         safetyMargin = 10;  /* TUNING: extra weight for indexed IN */
+2575         if( M + logK + safetyMargin < nIn + rLogSize ){
+2576           WHERETRACE(0x40,
+2577             ("Scan preferred over IN operator on column %d of \"%s\" (%d<%d)\n",
+2578              saved_nEq, pProbe->zName, M+logK+10, nIn+rLogSize));
+2579           pNew->wsFlags |= WHERE_IN_SEEKSCAN;
+2580         }else{
+2581           WHERETRACE(0x40,
+2582             ("IN operator preferred on column %d of \"%s\" (%d>=%d)\n",
+2583              saved_nEq, pProbe->zName, M+logK+10, nIn+rLogSize));
+2584         }
+2585       }
+2586       pNew->wsFlags |= WHERE_COLUMN_IN;
+2587     }else if( eOp & (WO_EQ|WO_IS) ){
+2588       int iCol = pProbe->aiColumn[saved_nEq];
+2589       pNew->wsFlags |= WHERE_COLUMN_EQ;
+2590       assert( saved_nEq==pNew->u.btree.nEq );
+2591       if( iCol==XN_ROWID 
+2592        || (iCol>=0 && nInMul==0 && saved_nEq==pProbe->nKeyCol-1)
+2593       ){
+2594         if( iCol==XN_ROWID || pProbe->uniqNotNull 
+2595          || (pProbe->nKeyCol==1 && pProbe->onError && eOp==WO_EQ) 
+2596         ){
+2597           pNew->wsFlags |= WHERE_ONEROW;
+2598         }else{
+2599           pNew->wsFlags |= WHERE_UNQ_WANTED;
+2600         }
+2601       }
+2602     }else if( eOp & WO_ISNULL ){
+2603       pNew->wsFlags |= WHERE_COLUMN_NULL;
+2604     }else if( eOp & (WO_GT|WO_GE) ){
+2605       testcase( eOp & WO_GT );
+2606       testcase( eOp & WO_GE );
+2607       pNew->wsFlags |= WHERE_COLUMN_RANGE|WHERE_BTM_LIMIT;
+2608       pNew->u.btree.nBtm = whereRangeVectorLen(
+2609           pParse, pSrc->iCursor, pProbe, saved_nEq, pTerm
+2610       );
+2611       pBtm = pTerm;
+2612       pTop = 0;
+2613       if( pTerm->wtFlags & TERM_LIKEOPT ){
+2614         /* Range contraints that come from the LIKE optimization are
+2615         ** always used in pairs. */
+2616         pTop = &pTerm[1];
+2617         assert( (pTop-(pTerm->pWC->a))<pTerm->pWC->nTerm );
+2618         assert( pTop->wtFlags & TERM_LIKEOPT );
+2619         assert( pTop->eOperator==WO_LT );
+2620         if( whereLoopResize(db, pNew, pNew->nLTerm+1) ) break; /* OOM */
+2621         pNew->aLTerm[pNew->nLTerm++] = pTop;
+2622         pNew->wsFlags |= WHERE_TOP_LIMIT;
+2623         pNew->u.btree.nTop = 1;
+2624       }
+2625     }else{
+2626       assert( eOp & (WO_LT|WO_LE) );
+2627       testcase( eOp & WO_LT );
+2628       testcase( eOp & WO_LE );
+2629       pNew->wsFlags |= WHERE_COLUMN_RANGE|WHERE_TOP_LIMIT;
+2630       pNew->u.btree.nTop = whereRangeVectorLen(
+2631           pParse, pSrc->iCursor, pProbe, saved_nEq, pTerm
+2632       );
+2633       pTop = pTerm;
+2634       pBtm = (pNew->wsFlags & WHERE_BTM_LIMIT)!=0 ?
+2635                      pNew->aLTerm[pNew->nLTerm-2] : 0;
+2636     }
+2637 
+2638     /* At this point pNew->nOut is set to the number of rows expected to
+2639     ** be visited by the index scan before considering term pTerm, or the
+2640     ** values of nIn and nInMul. In other words, assuming that all 
+2641     ** "x IN(...)" terms are replaced with "x = ?". This block updates
+2642     ** the value of pNew->nOut to account for pTerm (but not nIn/nInMul).  */
+2643     assert( pNew->nOut==saved_nOut );
+2644     if( pNew->wsFlags & WHERE_COLUMN_RANGE ){
+2645       /* Adjust nOut using stat4 data. Or, if there is no stat4
+2646       ** data, using some other estimate.  */
+2647       whereRangeScanEst(pParse, pBuilder, pBtm, pTop, pNew);
+2648     }else{
+2649       int nEq = ++pNew->u.btree.nEq;
+2650       assert( eOp & (WO_ISNULL|WO_EQ|WO_IN|WO_IS) );
+2651 
+2652       assert( pNew->nOut==saved_nOut );
+2653       if( pTerm->truthProb<=0 && pProbe->aiColumn[saved_nEq]>=0 ){
+2654         assert( (eOp & WO_IN) || nIn==0 );
+2655         testcase( eOp & WO_IN );
+2656         pNew->nOut += pTerm->truthProb;
+2657         pNew->nOut -= nIn;
+2658       }else{
+2659 #ifdef SQLITE_ENABLE_STAT4
+2660         tRowcnt nOut = 0;
+2661         if( nInMul==0 
+2662          && pProbe->nSample 
+2663          && pNew->u.btree.nEq<=pProbe->nSampleCol
+2664          && ((eOp & WO_IN)==0 || !ExprHasProperty(pTerm->pExpr, EP_xIsSelect))
+2665          && OptimizationEnabled(db, SQLITE_Stat4)
+2666         ){
+2667           Expr *pExpr = pTerm->pExpr;
+2668           if( (eOp & (WO_EQ|WO_ISNULL|WO_IS))!=0 ){
+2669             testcase( eOp & WO_EQ );
+2670             testcase( eOp & WO_IS );
+2671             testcase( eOp & WO_ISNULL );
+2672             rc = whereEqualScanEst(pParse, pBuilder, pExpr->pRight, &nOut);
+2673           }else{
+2674             rc = whereInScanEst(pParse, pBuilder, pExpr->x.pList, &nOut);
+2675           }
+2676           if( rc==SQLITE_NOTFOUND ) rc = SQLITE_OK;
+2677           if( rc!=SQLITE_OK ) break;          /* Jump out of the pTerm loop */
+2678           if( nOut ){
+2679             pNew->nOut = sqlite3LogEst(nOut);
+2680             if( nEq==1
+2681              /* TUNING: Mark terms as "low selectivity" if they seem likely
+2682              ** to be true for half or more of the rows in the table.
+2683              ** See tag-202002240-1 */
+2684              && pNew->nOut+10 > pProbe->aiRowLogEst[0]
+2685             ){
+2686 #if WHERETRACE_ENABLED /* 0x01 */
+2687               if( sqlite3WhereTrace & 0x01 ){
+2688                 sqlite3DebugPrintf(
+2689                    "STAT4 determines term has low selectivity:\n");
+2690                 sqlite3WhereTermPrint(pTerm, 999);
+2691               }
+2692 #endif
+2693               pTerm->wtFlags |= TERM_HIGHTRUTH;
+2694               if( pTerm->wtFlags & TERM_HEURTRUTH ){
+2695                 /* If the term has previously been used with an assumption of
+2696                 ** higher selectivity, then set the flag to rerun the
+2697                 ** loop computations. */
+2698                 pBuilder->bldFlags2 |= SQLITE_BLDF2_2NDPASS;
+2699               }
+2700             }
+2701             if( pNew->nOut>saved_nOut ) pNew->nOut = saved_nOut;
+2702             pNew->nOut -= nIn;
+2703           }
+2704         }
+2705         if( nOut==0 )
+2706 #endif
+2707         {
+2708           pNew->nOut += (pProbe->aiRowLogEst[nEq] - pProbe->aiRowLogEst[nEq-1]);
+2709           if( eOp & WO_ISNULL ){
+2710             /* TUNING: If there is no likelihood() value, assume that a 
+2711             ** "col IS NULL" expression matches twice as many rows 
+2712             ** as (col=?). */
+2713             pNew->nOut += 10;
+2714           }
+2715         }
+2716       }
+2717     }
+2718 
+2719     /* Set rCostIdx to the cost of visiting selected rows in index. Add
+2720     ** it to pNew->rRun, which is currently set to the cost of the index
+2721     ** seek only. Then, if this is a non-covering index, add the cost of
+2722     ** visiting the rows in the main table.  */
+2723     assert( pSrc->pTab->szTabRow>0 );
+2724     rCostIdx = pNew->nOut + 1 + (15*pProbe->szIdxRow)/pSrc->pTab->szTabRow;
+2725     pNew->rRun = sqlite3LogEstAdd(rLogSize, rCostIdx);
+2726     if( (pNew->wsFlags & (WHERE_IDX_ONLY|WHERE_IPK))==0 ){
+2727       pNew->rRun = sqlite3LogEstAdd(pNew->rRun, pNew->nOut + 16);
+2728     }
+2729     ApplyCostMultiplier(pNew->rRun, pProbe->pTable->costMult);
+2730 
+2731     nOutUnadjusted = pNew->nOut;
+2732     pNew->rRun += nInMul + nIn;
+2733     pNew->nOut += nInMul + nIn;
+2734     whereLoopOutputAdjust(pBuilder->pWC, pNew, rSize);
+2735     rc = whereLoopInsert(pBuilder, pNew);
+2736 
+2737     if( pNew->wsFlags & WHERE_COLUMN_RANGE ){
+2738       pNew->nOut = saved_nOut;
+2739     }else{
+2740       pNew->nOut = nOutUnadjusted;
+2741     }
+2742 
+2743     if( (pNew->wsFlags & WHERE_TOP_LIMIT)==0
+2744      && pNew->u.btree.nEq<pProbe->nColumn
+2745     ){
+2746       whereLoopAddBtreeIndex(pBuilder, pSrc, pProbe, nInMul+nIn);
+2747     }
+2748     pNew->nOut = saved_nOut;
+2749 #ifdef SQLITE_ENABLE_STAT4
+2750     pBuilder->nRecValid = nRecValid;
+2751 #endif
+2752   }
+2753   pNew->prereq = saved_prereq;
+2754   pNew->u.btree.nEq = saved_nEq;
+2755   pNew->u.btree.nBtm = saved_nBtm;
+2756   pNew->u.btree.nTop = saved_nTop;
+2757   pNew->nSkip = saved_nSkip;
+2758   pNew->wsFlags = saved_wsFlags;
+2759   pNew->nOut = saved_nOut;
+2760   pNew->nLTerm = saved_nLTerm;
+2761 
+2762   /* Consider using a skip-scan if there are no WHERE clause constraints
+2763   ** available for the left-most terms of the index, and if the average
+2764   ** number of repeats in the left-most terms is at least 18. 
+2765   **
+2766   ** The magic number 18 is selected on the basis that scanning 17 rows
+2767   ** is almost always quicker than an index seek (even though if the index
+2768   ** contains fewer than 2^17 rows we assume otherwise in other parts of
+2769   ** the code). And, even if it is not, it should not be too much slower. 
+2770   ** On the other hand, the extra seeks could end up being significantly
+2771   ** more expensive.  */
+2772   assert( 42==sqlite3LogEst(18) );
+2773   if( saved_nEq==saved_nSkip
+2774    && saved_nEq+1<pProbe->nKeyCol
+2775    && saved_nEq==pNew->nLTerm
+2776    && pProbe->noSkipScan==0
+2777    && pProbe->hasStat1!=0
+2778    && OptimizationEnabled(db, SQLITE_SkipScan)
+2779    && pProbe->aiRowLogEst[saved_nEq+1]>=42  /* TUNING: Minimum for skip-scan */
+2780   ){
+2781     LogEst nIter;
+2782     pNew->u.btree.nEq++;
+2783     pNew->nSkip++;
+2784     pNew->aLTerm[pNew->nLTerm++] = 0;
+2785     pNew->wsFlags |= WHERE_SKIPSCAN;
+2786     nIter = pProbe->aiRowLogEst[saved_nEq] - pProbe->aiRowLogEst[saved_nEq+1];
+2787     pNew->nOut -= nIter;
+2788     /* TUNING:  Because uncertainties in the estimates for skip-scan queries,
+2789     ** add a 1.375 fudge factor to make skip-scan slightly less likely. */
+2790     nIter += 5;
+2791     whereLoopAddBtreeIndex(pBuilder, pSrc, pProbe, nIter + nInMul);
+2792     pNew->nOut = saved_nOut;
+2793     pNew->u.btree.nEq = saved_nEq;
+2794     pNew->nSkip = saved_nSkip;
+2795     pNew->wsFlags = saved_wsFlags;
+2796   }
+2797 
+2798   WHERETRACE(0x800, ("END %s.addBtreeIdx(%s), nEq=%d, rc=%d\n",
+2799                       pProbe->pTable->zName, pProbe->zName, saved_nEq, rc));
+2800   return rc;
+2801 }

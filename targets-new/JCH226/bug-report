@@ -1,0 +1,47 @@
+Vulnerability Type: pragma.c in SQLite through 3.30.1 mishandles NOT NULL in an integrity_check PRAGMA command in certain cases of generated columns
+Crash/Trigger Point(s): in sqlite3Pragma pragma.c:1680
+Bug Call Trace:
+    #1  0x00000000006e3c18 in sqlite3Pragma (pParse=0x7ffef113c5e0, pId1=<optimized out>, pId2=<optimized out>, pValue=<optimized out>, minusFlag=<optimized out>)
+        at pragma.c:1680
+    #2  0x000000000069d236 in yy_reduce (yypParser=0x7ffef113ba30, yyruleno=<optimized out>, yyLookahead=<optimized out>, yyLookaheadToken=..., 
+        pParse=<optimized out>) at sqlite3.c:159374
+    #3  0x000000000069516a in sqlite3Parser (yyp=0x7ffef113ba30, yymajor=<optimized out>, yyminor=...) at sqlite3.c:159931
+    #4  0x000000000050e1b0 in sqlite3RunParser (pParse=0x7ffef113c5e0, 
+        zSql=0x61f0000003de ";\v} {ok}\n\n# 2019-12-09 bug report from Yongheng ChCn\n# Ensure that the SrcList_item.colUsed field is set correctly when a\n# generated colucn appears in the USING clause of a join.\n#\ndo_execsql_test ge"..., pzErrMsg=<optimized out>) at sqlite3.c:161214
+    #5  0x0000000000672968 in sqlite3Prepare (db=<optimized out>, zSql=<optimized out>, nBytes=<optimized out>, prepFlags=<optimized out>, 
+        pReprepare=<optimized out>, ppStmt=<optimized out>, pzTail=<optimized out>) at sqlite3.c:129518
+    #6  0x00000000005099ed in sqlite3LockAndPrepare (db=<optimized out>, 
+        zSql=0x61f0000003c8 "PRAGMA integrity_check;\v} {ok}\n\n# 2019-12-09 bug report from Yongheng ChCn\n# Ensure that the SrcList_item.colUsed field is set correctly when a\n# generated colucn appears in the USING clause of a join"..., nBytes=-1, prepFlags=128, pOld=0x0, ppStmt=0x7ffef113c9c0, pzTail=0x7ffef113c9a0)
+        at sqlite3.c:129590
+    --Type <RET> for more, q to quit, c to continue without paging--
+    #7  0x000000000050767f in sqlite3_prepare_v2 (db=0x8e0860 <str>, zSql=0x1 <error: Cannot access memory at address 0x1>, nBytes=20572752, ppStmt=0x7ffef113c9c0, 
+        pzTail=<optimized out>) at sqlite3.c:129675
+    #8  0x00000000005064b8 in sqlite3_exec (db=<optimized out>, 
+        zSql=0x61f0000003c8 "PRAGMA integrity_check;\v} {ok}\n\n# 2019-12-09 bug report from Yongheng ChCn\n# Ensure that the SrcList_item.colUsed field is set correctly when a\n# generated colucn appears in the USING clause of a join"..., xCallback=<optimized out>, pArg=<optimized out>, pzErrMsg=<optimized out>)
+        at sqlite3.c:123977
+    #9  0x00000000004c4aa9 in LLVMFuzzerTestOneInput (
+        data=0x628000000100 '-' <repeats 37 times>, "\035", '-' <repeats 11 times>, "\f", '-' <repeats 16 times>, "\231", '-' <repeats 21 times>, "(5, 6)\377\377  -----H", '-' <repeats 17 times>, "=", '-' <repeats 13 times>, "\"", '-' <repeats 32 times>, "<:----------\026", '-' <repeats 16 times>, "{ \n"..., 
+        size=107683420045440) at /root/magma_trigger/targets/sqlite3/repo/test/ossfuzz.c:183
+    #10 0x00000000008519c4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #11 0x0000000000850c51 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/src/pragma.c b/src/pragma.c
+    index c5b5bb667..a882e2307 100644
+    --- a/src/pragma.c
+    +++ b/src/pragma.c
+    @@ -1645,9 +1645,17 @@ void sqlite3Pragma(
+            if( j==pTab->iPKey ) continue;
+            if( pTab->aCol[j].notNull==0 ) continue;
+            sqlite3ExprCodeGetColumnOfTable(v, pTab, iDataCur, j, 3);
+    +#ifndef MAGMA_ENABLE_FIXES
+    +#else
+            if( sqlite3VdbeGetOp(v,-1)->opcode==OP_Column ){
+    +#endif
+                sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
+    +#ifdef MAGMA_ENABLE_FIXES
+            }
+    +#endif
+            jmp2 = sqlite3VdbeAddOp1(v, OP_NotNull, 3); VdbeCoverage(v);
+            zErr = sqlite3MPrintf(db, "NULL value in %s.%s", pTab->zName,
+                                pTab->aCol[j].zName);

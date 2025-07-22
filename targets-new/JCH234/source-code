@@ -1,0 +1,151 @@
+In window.c:
+
+886 /*
+887 ** Append a copy of each expression in expression-list pAppend to
+888 ** expression list pList. Return a pointer to the result list.
+889 */
+890 static ExprList *exprListAppendList(
+891   Parse *pParse,          /* Parsing context */
+892   ExprList *pList,        /* List to which to append. Might be NULL */
+893   ExprList *pAppend,      /* List of values to append. Might be NULL */
+894   int bIntToNull
+895 ){
+896   if( pAppend ){
+897     int i;
+898     int nInit = pList ? pList->nExpr : 0;
+899     for(i=0; i<pAppend->nExpr; i++){
+900       Expr *pDup = sqlite3ExprDup(pParse->db, pAppend->a[i].pExpr, 0);
+901       assert( pDup==0 || !ExprHasProperty(pDup, EP_MemToken) );
+902       if( bIntToNull && pDup ){
+903         int iDummy;
+904         Expr *pSub;
+905         for(pSub=pDup; ExprHasProperty(pSub, EP_Skip); pSub=pSub->pLeft){
+906           assert( pSub );
+907         }
+908         if( sqlite3ExprIsInteger(pSub, &iDummy) ){
+909           pSub->op = TK_NULL;
+910           pSub->flags &= ~(EP_IntValue|EP_IsTrue|EP_IsFalse);
+911         }
+912       }
+913       pList = sqlite3ExprListAppend(pParse, pList, pDup);
+914       if( pList ) pList->a[nInit+i].sortFlags = pAppend->a[i].sortFlags;
+915     }
+916   }
+917   return pList;
+918 }
+
+In expr.c:
+
+1631 /*
+1632 ** Add a new element to the end of an expression list.  If pList is
+1633 ** initially NULL, then create a new expression list.
+1634 **
+1635 ** The pList argument must be either NULL or a pointer to an ExprList
+1636 ** obtained from a prior call to sqlite3ExprListAppend().  This routine
+1637 ** may not be used with an ExprList obtained from sqlite3ExprListDup().
+1638 ** Reason:  This routine assumes that the number of slots in pList->a[]
+1639 ** is a power of two.  That is true for sqlite3ExprListAppend() returns
+1640 ** but is not necessarily true from the return value of sqlite3ExprListDup().
+1641 **
+1642 ** If a memory allocation error occurs, the entire list is freed and
+1643 ** NULL is returned.  If non-NULL is returned, then it is guaranteed
+1644 ** that the new entry was successfully appended.
+1645 */
+1646 ExprList *sqlite3ExprListAppend(
+1647   Parse *pParse,          /* Parsing context */
+1648   ExprList *pList,        /* List to which to append. Might be NULL */
+1649   Expr *pExpr             /* Expression to be appended. Might be NULL */
+1650 ){
+1651   struct ExprList_item *pItem;
+1652   sqlite3 *db = pParse->db;
+1653   assert( db!=0 );
+1654   if( pList==0 ){
+1655     pList = sqlite3DbMallocRawNN(db, sizeof(ExprList) );
+1656     if( pList==0 ){
+1657       goto no_mem;
+1658     }
+1659     pList->nExpr = 0;
+1660   }else if( (pList->nExpr & (pList->nExpr-1))==0 ){
+1661     ExprList *pNew;
+1662     pNew = sqlite3DbRealloc(db, pList, 
+1663          sizeof(*pList)+(2*(sqlite3_int64)pList->nExpr-1)*sizeof(pList->a[0]));
+1664     if( pNew==0 ){
+1665       goto no_mem;
+1666     }
+1667     pList = pNew;
+1668   }
+1669   pItem = &pList->a[pList->nExpr++];
+1670   assert( offsetof(struct ExprList_item,zEName)==sizeof(pItem->pExpr) );
+1671   assert( offsetof(struct ExprList_item,pExpr)==0 );
+1672   memset(&pItem->zEName,0,sizeof(*pItem)-offsetof(struct ExprList_item,zEName));
+1673   pItem->pExpr = pExpr;
+1674   return pList;
+1675 
+1676 no_mem:     
+1677   /* Avoid leaking memory if malloc has failed. */
+1678   sqlite3ExprDelete(db, pExpr);
+1679   sqlite3ExprListDelete(db, pList);
+1680   return 0;
+1681 }
+
+
+In sqliteInt.h:
+struct Expr {
+  u8 op;                 /* Operation performed by this node */
+  char affExpr;          /* affinity, or RAISE type */
+  u8 op2;                /* TK_REGISTER/TK_TRUTH: original value of Expr.op
+                         ** TK_COLUMN: the value of p5 for OP_Column
+                         ** TK_AGG_FUNCTION: nesting depth
+                         ** TK_FUNCTION: NC_SelfRef flag if needs OP_PureFunc */
+#ifdef SQLITE_DEBUG
+  u8 vvaFlags;           /* Verification flags. */
+#endif
+  u32 flags;             /* Various flags.  EP_* See below */
+  union {
+    char *zToken;          /* Token value. Zero terminated and dequoted */
+    int iValue;            /* Non-negative integer value if EP_IntValue */
+  } u;
+
+  /* If the EP_TokenOnly flag is set in the Expr.flags mask, then no
+  ** space is allocated for the fields below this point. An attempt to
+  ** access them will result in a segfault or malfunction.
+  *********************************************************************/
+
+  Expr *pLeft;           /* Left subnode */
+  Expr *pRight;          /* Right subnode */
+  union {
+    ExprList *pList;     /* op = IN, EXISTS, SELECT, CASE, FUNCTION, BETWEEN */
+    Select *pSelect;     /* EP_xIsSelect and op = IN, EXISTS, SELECT */
+  } x;
+
+  /* If the EP_Reduced flag is set in the Expr.flags mask, then no
+  ** space is allocated for the fields below this point. An attempt to
+  ** access them will result in a segfault or malfunction.
+  *********************************************************************/
+
+#if SQLITE_MAX_EXPR_DEPTH>0
+  int nHeight;           /* Height of the tree headed by this node */
+#endif
+  int iTable;            /* TK_COLUMN: cursor number of table holding column
+                         ** TK_REGISTER: register number
+                         ** TK_TRIGGER: 1 -> new, 0 -> old
+                         ** EP_Unlikely:  134217728 times likelihood
+                         ** TK_IN: ephemerial table holding RHS
+                         ** TK_SELECT_COLUMN: Number of columns on the LHS
+                         ** TK_SELECT: 1st register of result vector */
+  ynVar iColumn;         /* TK_COLUMN: column index.  -1 for rowid.
+                         ** TK_VARIABLE: variable number (always >= 1).
+                         ** TK_SELECT_COLUMN: column of the result vector */
+  i16 iAgg;              /* Which entry in pAggInfo->aCol[] or ->aFunc[] */
+  i16 iRightJoinTable;   /* If EP_FromJoin, the right table of the join */
+  AggInfo *pAggInfo;     /* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
+  union {
+    Table *pTab;           /* TK_COLUMN: Table containing column. Can be NULL
+                           ** for a column of an index on an expression */
+    Window *pWin;          /* EP_WinFunc: Window/Filter defn for a function */
+    struct {               /* TK_IN, TK_SELECT, and TK_EXISTS */
+      int iAddr;             /* Subroutine entry address */
+      int regReturn;         /* Register used to hold return address */
+    } sub;
+  } y;
+};
