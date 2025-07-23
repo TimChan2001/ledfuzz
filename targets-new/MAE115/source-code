@@ -1,0 +1,284 @@
+In t1_lib.c:
+
+1761 /*-
+1762  * tls_decrypt_ticket attempts to decrypt a session ticket.
+1763  *
+1764  * If s->tls_session_secret_cb is set and we're not doing TLSv1.3 then we are
+1765  * expecting a pre-shared key ciphersuite, in which case we have no use for
+1766  * session tickets and one will never be decrypted, nor will
+1767  * s->ext.ticket_expected be set to 1.
+1768  *
+1769  * Side effects:
+1770  *   Sets s->ext.ticket_expected to 1 if the server will have to issue
+1771  *   a new session ticket to the client because the client indicated support
+1772  *   (and s->tls_session_secret_cb is NULL) but the client either doesn't have
+1773  *   a session ticket or we couldn't use the one it gave us, or if
+1774  *   s->ctx->ext.ticket_key_cb asked to renew the client's ticket.
+1775  *   Otherwise, s->ext.ticket_expected is set to 0.
+1776  *
+1777  *   etick: points to the body of the session ticket extension.
+1778  *   eticklen: the length of the session tickets extension.
+1779  *   sess_id: points at the session ID.
+1780  *   sesslen: the length of the session ID.
+1781  *   psess: (output) on return, if a ticket was decrypted, then this is set to
+1782  *       point to the resulting session.
+1783  */
+1784 SSL_TICKET_STATUS tls_decrypt_ticket(SSL *s, const unsigned char *etick,
+1785                                      size_t eticklen, const unsigned char *sess_id,
+1786                                      size_t sesslen, SSL_SESSION **psess)
+1787 {
+1788     SSL_SESSION *sess = NULL;
+1789     unsigned char *sdec;
+1790     const unsigned char *p;
+1791     int slen, renew_ticket = 0, declen;
+1792     SSL_TICKET_STATUS ret = SSL_TICKET_FATAL_ERR_OTHER;
+1793     size_t mlen;
+1794     unsigned char tick_hmac[EVP_MAX_MD_SIZE];
+1795     SSL_HMAC *hctx = NULL;
+1796     EVP_CIPHER_CTX *ctx = NULL;
+1797     SSL_CTX *tctx = s->session_ctx;
+1798 
+1799     if (eticklen == 0) {
+1800         /*
+1801          * The client will accept a ticket but doesn't currently have
+1802          * one (TLSv1.2 and below), or treated as a fatal error in TLSv1.3
+1803          */
+1804         ret = SSL_TICKET_EMPTY;
+1805         goto end;
+1806     }
+1807     if (!SSL_IS_TLS13(s) && s->ext.session_secret_cb) {
+1808         /*
+1809          * Indicate that the ticket couldn't be decrypted rather than
+1810          * generating the session from ticket now, trigger
+1811          * abbreviated handshake based on external mechanism to
+1812          * calculate the master secret later.
+1813          */
+1814         ret = SSL_TICKET_NO_DECRYPT;
+1815         goto end;
+1816     }
+1817 
+1818     /* Need at least keyname + iv */
+1819     if (eticklen < TLSEXT_KEYNAME_LENGTH + EVP_MAX_IV_LENGTH) {
+1820         ret = SSL_TICKET_NO_DECRYPT;
+1821         goto end;
+1822     }
+1823 
+1824     /* Initialize session ticket encryption and HMAC contexts */
+1825     hctx = ssl_hmac_new(tctx);
+1826     if (hctx == NULL) {
+1827         ret = SSL_TICKET_FATAL_ERR_MALLOC;
+1828         goto end;
+1829     }
+1830     ctx = EVP_CIPHER_CTX_new();
+1831     if (ctx == NULL) {
+1832         ret = SSL_TICKET_FATAL_ERR_MALLOC;
+1833         goto end;
+1834     }
+1835 #ifndef OPENSSL_NO_DEPRECATED_3_0
+1836     if (tctx->ext.ticket_key_evp_cb != NULL || tctx->ext.ticket_key_cb != NULL)
+1837 #else
+1838     if (tctx->ext.ticket_key_evp_cb != NULL)
+1839 #endif
+1840     {
+1841         unsigned char *nctick = (unsigned char *)etick;
+1842         int rv = 0;
+1843 
+1844         if (tctx->ext.ticket_key_evp_cb != NULL)
+1845             rv = tctx->ext.ticket_key_evp_cb(s, nctick,
+1846                                              nctick + TLSEXT_KEYNAME_LENGTH,
+1847                                              ctx,
+1848                                              ssl_hmac_get0_EVP_MAC_CTX(hctx),
+1849                                              0);
+1850 #ifndef OPENSSL_NO_DEPRECATED_3_0
+1851         else if (tctx->ext.ticket_key_cb != NULL)
+1852             /* if 0 is returned, write an empty ticket */
+1853             rv = tctx->ext.ticket_key_cb(s, nctick,
+1854                                          nctick + TLSEXT_KEYNAME_LENGTH,
+1855                                          ctx, ssl_hmac_get0_HMAC_CTX(hctx), 0);
+1856 #endif
+1857         if (rv < 0) {
+1858             ret = SSL_TICKET_FATAL_ERR_OTHER;
+1859             goto end;
+1860         }
+1861         if (rv == 0) {
+1862             ret = SSL_TICKET_NO_DECRYPT;
+1863             goto end;
+1864         }
+1865         if (rv == 2)
+1866             renew_ticket = 1;
+1867     } else {
+1868         EVP_CIPHER *aes256cbc = NULL;
+1869 
+1870         /* Check key name matches */
+1871         if (memcmp(etick, tctx->ext.tick_key_name,
+1872                    TLSEXT_KEYNAME_LENGTH) != 0) {
+1873             ret = SSL_TICKET_NO_DECRYPT;
+1874             goto end;
+1875         }
+1876 
+1877         aes256cbc = EVP_CIPHER_fetch(s->ctx->libctx, "AES-256-CBC",
+1878                                      s->ctx->propq);
+1879         if (aes256cbc == NULL
+1880             || ssl_hmac_init(hctx, tctx->ext.secure->tick_hmac_key,
+1881                              sizeof(tctx->ext.secure->tick_hmac_key),
+1882                              "SHA256") <= 0
+1883             || EVP_DecryptInit_ex(ctx, aes256cbc, NULL,
+1884                                   tctx->ext.secure->tick_aes_key,
+1885                                   etick + TLSEXT_KEYNAME_LENGTH) <= 0) {
+1886             EVP_CIPHER_free(aes256cbc);
+1887             ret = SSL_TICKET_FATAL_ERR_OTHER;
+1888             goto end;
+1889         }
+1890         EVP_CIPHER_free(aes256cbc);
+1891         if (SSL_IS_TLS13(s))
+1892             renew_ticket = 1;
+1893     }
+1894     /*
+1895      * Attempt to process session ticket, first conduct sanity and integrity
+1896      * checks on ticket.
+1897      */
+1898     mlen = ssl_hmac_size(hctx);
+1899     if (mlen == 0) {
+1900         ret = SSL_TICKET_FATAL_ERR_OTHER;
+1901         goto end;
+1902     }
+1903 
+1904     /* Sanity check ticket length: must exceed keyname + IV + HMAC */
+1905     if (eticklen < 48) {
+1906         ret = SSL_TICKET_NO_DECRYPT;
+1907         goto end;
+1908     }
+1909     eticklen -= mlen;
+1910     /* Check HMAC of encrypted ticket */
+1911     if (ssl_hmac_update(hctx, etick, eticklen) <= 0
+1912         || ssl_hmac_final(hctx, tick_hmac, NULL, sizeof(tick_hmac)) <= 0) {
+1913         ret = SSL_TICKET_FATAL_ERR_OTHER;
+1914         goto end;
+1915     }
+1916 
+1917     if (CRYPTO_memcmp(tick_hmac, etick + eticklen, mlen)) {
+1918         ret = SSL_TICKET_NO_DECRYPT;
+1919         goto end;
+1920     }
+1921     /* Attempt to decrypt session data */
+1922     /* Move p after IV to start of encrypted ticket, update length */
+1923     p = etick + TLSEXT_KEYNAME_LENGTH + EVP_CIPHER_CTX_iv_length(ctx);
+1924     eticklen -= TLSEXT_KEYNAME_LENGTH + EVP_CIPHER_CTX_iv_length(ctx);
+1925     sdec = OPENSSL_malloc(eticklen);
+1926     if (sdec == NULL || EVP_DecryptUpdate(ctx, sdec, &slen, p,
+1927                                           (int)eticklen) <= 0) {
+1928         OPENSSL_free(sdec);
+1929         ret = SSL_TICKET_FATAL_ERR_OTHER;
+1930         goto end;
+1931     }
+1932     if (EVP_DecryptFinal(ctx, sdec + slen, &declen) <= 0) {
+1933         OPENSSL_free(sdec);
+1934         ret = SSL_TICKET_NO_DECRYPT;
+1935         goto end;
+1936     }
+1937     slen += declen;
+1938     p = sdec;
+1939 
+1940     sess = d2i_SSL_SESSION(NULL, &p, slen);
+1941     slen -= p - sdec;
+1942     OPENSSL_free(sdec);
+1943     if (sess) {
+1944         /* Some additional consistency checks */
+1945         if (slen != 0) {
+1946             SSL_SESSION_free(sess);
+1947             sess = NULL;
+1948             ret = SSL_TICKET_NO_DECRYPT;
+1949             goto end;
+1950         }
+1951         /*
+1952          * The session ID, if non-empty, is used by some clients to detect
+1953          * that the ticket has been accepted. So we copy it to the session
+1954          * structure. If it is empty set length to zero as required by
+1955          * standard.
+1956          */
+1957         if (sesslen) {
+1958             memcpy(sess->session_id, sess_id, sesslen);
+1959             sess->session_id_length = sesslen;
+1960         }
+1961         if (renew_ticket)
+1962             ret = SSL_TICKET_SUCCESS_RENEW;
+1963         else
+1964             ret = SSL_TICKET_SUCCESS;
+1965         goto end;
+1966     }
+1967     ERR_clear_error();
+1968     /*
+1969      * For session parse failure, indicate that we need to send a new ticket.
+1970      */
+1971     ret = SSL_TICKET_NO_DECRYPT;
+1972 
+1973  end:
+1974     EVP_CIPHER_CTX_free(ctx);
+1975     ssl_hmac_free(hctx);
+1976 
+1977     /*
+1978      * If set, the decrypt_ticket_cb() is called unless a fatal error was
+1979      * detected above. The callback is responsible for checking |ret| before it
+1980      * performs any action
+1981      */
+1982     if (s->session_ctx->decrypt_ticket_cb != NULL
+1983             && (ret == SSL_TICKET_EMPTY
+1984                 || ret == SSL_TICKET_NO_DECRYPT
+1985                 || ret == SSL_TICKET_SUCCESS
+1986                 || ret == SSL_TICKET_SUCCESS_RENEW)) {
+1987         size_t keyname_len = eticklen;
+1988         int retcb;
+1989 
+1990         if (keyname_len > TLSEXT_KEYNAME_LENGTH)
+1991             keyname_len = TLSEXT_KEYNAME_LENGTH;
+1992         retcb = s->session_ctx->decrypt_ticket_cb(s, sess, etick, keyname_len,
+1993                                                   ret,
+1994                                                   s->session_ctx->ticket_cb_data);
+1995         switch (retcb) {
+1996         case SSL_TICKET_RETURN_ABORT:
+1997             ret = SSL_TICKET_FATAL_ERR_OTHER;
+1998             break;
+1999 
+2000         case SSL_TICKET_RETURN_IGNORE:
+2001             ret = SSL_TICKET_NONE;
+2002             SSL_SESSION_free(sess);
+2003             sess = NULL;
+2004             break;
+2005 
+2006         case SSL_TICKET_RETURN_IGNORE_RENEW:
+2007             if (ret != SSL_TICKET_EMPTY && ret != SSL_TICKET_NO_DECRYPT)
+2008                 ret = SSL_TICKET_NO_DECRYPT;
+2009             /* else the value of |ret| will already do the right thing */
+2010             SSL_SESSION_free(sess);
+2011             sess = NULL;
+2012             break;
+2013 
+2014         case SSL_TICKET_RETURN_USE:
+2015         case SSL_TICKET_RETURN_USE_RENEW:
+2016             if (ret != SSL_TICKET_SUCCESS
+2017                     && ret != SSL_TICKET_SUCCESS_RENEW)
+2018                 ret = SSL_TICKET_FATAL_ERR_OTHER;
+2019             else if (retcb == SSL_TICKET_RETURN_USE)
+2020                 ret = SSL_TICKET_SUCCESS;
+2021             else
+2022                 ret = SSL_TICKET_SUCCESS_RENEW;
+2023             break;
+2024 
+2025         default:
+2026             ret = SSL_TICKET_FATAL_ERR_OTHER;
+2027         }
+2028     }
+2029 
+2030     if (s->ext.session_secret_cb == NULL || SSL_IS_TLS13(s)) {
+2031         switch (ret) {
+2032         case SSL_TICKET_NO_DECRYPT:
+2033         case SSL_TICKET_SUCCESS_RENEW:
+2034         case SSL_TICKET_EMPTY:
+2035             s->ext.ticket_expected = 1;
+2036         }
+2037     }
+2038 
+2039     *psess = sess;
+2040 
+2041     return ret;
+2042 }

@@ -1,0 +1,125 @@
+In Parser.cc:
+
+70 Object Parser::getObj(bool simpleOnly, const unsigned char *fileKey, CryptAlgorithm encAlgorithm, int keyLength, int objNum, int objGen, int recursion, bool strict)
+71 {
+72     Object obj;
+73     Stream *str;
+74     DecryptStream *decrypt;
+75     const GooString *s;
+76     GooString *s2;
+77     int c;
+78 
+79     // refill buffer after inline image data
+80     if (inlineImg == 2) {
+81         buf1 = lexer.getObj();
+82         buf2 = lexer.getObj();
+83         inlineImg = 0;
+84     }
+85 
+86     if (unlikely(recursion >= recursionLimit)) {
+87         return Object(objError);
+88     }
+89 
+90     // array
+91     if (!simpleOnly && buf1.isCmd("[")) {
+92         shift();
+93         obj = Object(new Array(lexer.getXRef()));
+94         while (!buf1.isCmd("]") && !buf1.isEOF() && recursion + 1 < recursionLimit) {
+95             Object obj2 = getObj(false, fileKey, encAlgorithm, keyLength, objNum, objGen, recursion + 1);
+96             obj.arrayAdd(std::move(obj2));
+97         }
+98         if (recursion + 1 >= recursionLimit && strict)
+99             goto err;
+100         if (buf1.isEOF()) {
+101             error(errSyntaxError, getPos(), "End of file inside array");
+102             if (strict)
+103                 goto err;
+104         }
+105         shift();
+106 
+107         // dictionary or stream
+108     } else if (!simpleOnly && buf1.isCmd("<<")) {
+109         shift(objNum);
+110         obj = Object(new Dict(lexer.getXRef()));
+111         while (!buf1.isCmd(">>") && !buf1.isEOF()) {
+112             if (!buf1.isName()) {
+113                 error(errSyntaxError, getPos(), "Dictionary key must be a name object");
+114                 if (strict)
+115                     goto err;
+116                 shift();
+117             } else {
+118                 // buf1 will go away in shift(), so keep the key
+119                 const auto key = std::move(buf1);
+120                 shift();
+121                 if (buf1.isEOF() || buf1.isError()) {
+122                     if (strict && buf1.isError())
+123                         goto err;
+124                     break;
+125                 }
+126                 Object obj2 = getObj(false, fileKey, encAlgorithm, keyLength, objNum, objGen, recursion + 1);
+127                 if (unlikely(obj2.isError() && recursion + 1 >= recursionLimit)) {
+128                     break;
+129                 }
+130                 obj.dictAdd(key.getName(), std::move(obj2));
+131             }
+132         }
+133         if (buf1.isEOF()) {
+134             error(errSyntaxError, getPos(), "End of file inside dictionary");
+135             if (strict)
+136                 goto err;
+137         }
+138         // stream objects are not allowed inside content streams or
+139         // object streams
+140         if (buf2.isCmd("stream")) {
+141             if (allowStreams && (str = makeStream(std::move(obj), fileKey, encAlgorithm, keyLength, objNum, objGen, recursion + 1, strict))) {
+142                 return Object(str);
+143             } else {
+144                 return Object(objError);
+145             }
+146         } else {
+147             shift();
+148         }
+149 
+150         // indirect reference or integer
+151     } else if (buf1.isInt()) {
+152         const int num = buf1.getInt();
+153         shift();
+154         if (buf1.isInt() && buf2.isCmd("R")) {
+155             const int gen = buf1.getInt();
+156             shift();
+157             shift();
+158             Ref r;
+159             r.num = num;
+160             r.gen = gen;
+161             return Object(r);
+162         } else {
+163             return Object(num);
+164         }
+165 
+166         // string
+167     } else if (buf1.isString() && fileKey) {
+168         s = buf1.getString();
+169         s2 = new GooString();
+170         decrypt = new DecryptStream(new MemStream(s->c_str(), 0, s->getLength(), Object(objNull)), fileKey, encAlgorithm, keyLength, { objNum, objGen });
+171         decrypt->reset();
+172         while ((c = decrypt->getChar()) != EOF) {
+173             s2->append((char)c);
+174         }
+175         delete decrypt;
+176         obj = Object(s2);
+177         shift();
+178 
+179         // simple object
+180     } else {
+181         // avoid re-allocating memory for complex objects like strings by
+182         // shallow copy of <buf1> to <obj> and nulling <buf1> so that
+183         // subsequent buf1.free() won't free this memory
+184         obj = std::move(buf1);
+185         shift();
+186     }
+187 
+188     return obj;
+189 
+190 err:
+191     return Object(objError);
+192 }

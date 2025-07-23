@@ -1,0 +1,50 @@
+Vulnerability Type: Poppler through 0.62 contains an out of bounds read vulnerability due to an incorrect memory access that is not mapped in its memory space, as demonstrated by pdfunite. This can result in memory corruption and denial of service. This may be exploitable when a victim opens a specially crafted PDF file.
+Crash/Trigger Point(s): in Parser::getObj Parser.cc:161
+Bug Call Trace:
+    #1  0x000000000069c765 in Parser::getObj (this=0x611000000180, simpleOnly=<optimized out>, fileKey=<optimized out>, 
+        encAlgorithm=<optimized out>, keyLength=<optimized out>, objNum=<optimized out>, objGen=<optimized out>, recursion=<optimized out>, 
+        strict=<optimized out>) at /root/magma_trigger/targets/poppler/repo/poppler/Parser.cc:161
+    #2  0x000000000069d5fa in Parser::getObj (this=0x611000000180, simpleOnly=<optimized out>, fileKey=<optimized out>, 
+        encAlgorithm=<optimized out>, keyLength=<optimized out>, objNum=<optimized out>, objGen=<optimized out>, recursion=<optimized out>, 
+        strict=<optimized out>) at /root/magma_trigger/targets/poppler/repo/poppler/Parser.cc:126
+    #3  0x000000000077f2c0 in XRef::readXRef (this=0x612000000040, pos=<optimized out>, followedXRefStm=<optimized out>, 
+        xrefStreamObjsNum=<optimized out>) at /root/magma_trigger/targets/poppler/repo/poppler/XRef.cc:481
+    #4  0x000000000077c590 in XRef::XRef (this=0x612000000040, strA=<optimized out>, pos=<optimized out>, mainXRefEntriesOffsetA=<optimized out>, 
+        wasReconstructed=<optimized out>, reconstruct=<optimized out>) at /root/magma_trigger/targets/poppler/repo/poppler/XRef.cc:284
+    #5  0x00000000006a00b7 in PDFDoc::setup (this=<optimized out>, ownerPassword=<optimized out>, userPassword=<optimized out>)
+        at /root/magma_trigger/targets/poppler/repo/poppler/PDFDoc.cc:276
+    #6  0x00000000006a0b88 in PDFDoc::PDFDoc (this=0x610000000040, strA=0x607000000090, ownerPassword=0x7ffe8fec4a00, userPassword=0x7ffe8fec4a40, 
+        guiDataA=0x0) at /root/magma_trigger/targets/poppler/repo/poppler/PDFDoc.cc:246
+    --Type <RET> for more, q to quit, c to continue without paging--
+    #7  0x00000000004cf689 in poppler::document_private::document_private (this=<optimized out>, file_data=<optimized out>, 
+        file_data_length=<optimized out>, owner_password=..., user_password=...)
+        at /root/magma_trigger/targets/poppler/repo/cpp/poppler-document.cpp:76
+    #8  0x00000000004d6e85 in poppler::document::load_from_raw_data (
+        file_data=0x629000000200 "%PDF-1.5\n%\344\360\355\370\n10 0 obj\n<</Filter/FlateDecode/Length 1727>>\nstream\nx\332\305Y\311\216\033\067\020\275\347+\372\a\304\260\270\023\020\346\020 9\344fdnA\016\202%\235\342\203O\371\375p\251*VS\034I3\236 \260\rus\251\365\325\326\336\276o\260\351\362\a\266h\312_\275}\375\266\375\362\272\375\374\033l\020\225\001\357\266\327\353\006)(\257\375v", file_data_length=17206, Python Exception <class 'gdb.error'> There is no member named _M_dataplus.: 
+    owner_password=, 
+        Python Exception <class 'gdb.error'> There is no member named _M_dataplus.: 
+    user_password=) at /root/magma_trigger/targets/poppler/repo/cpp/poppler-document.cpp:1099
+    #9  0x00000000004ce24b in LLVMFuzzerTestOneInput (
+        data=0x629000000200 "%PDF-1.5\n%\344\360\355\370\n10 0 obj\n<</Filter/FlateDecode/Length 1727>>\nstream\nx\332\305Y\311\216\033\067\020\275\347+\372\a\304\260\270\023\020\346\020 9\344fdnA\016\202%\235\342\203O\371\375p\251*VS\034I3\236 \260\rus\251\365\325\326\336\276o\260\351\362\a\266h\312_\275}\375\266\375\362\272\375\374\033l\020\225\001\357\266\327\353\006)(\257\375v", size=0)
+        at /root/magma_trigger/targets/poppler/src/pdf_fuzzer.cc:31
+    #10 0x0000000000c81fa4 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #11 0x0000000000c81231 in main (argc=2, argv=0x0) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/poppler/Parser.cc b/poppler/Parser.cc
+    index afb54dfb..7346604d 100644
+    --- a/poppler/Parser.cc
+    +++ b/poppler/Parser.cc
+    @@ -154,10 +154,14 @@ Object Parser::getObj(bool simpleOnly,
+                shift();
+                shift();
+    
+    +#ifdef MAGMA_ENABLE_FIXES
+                if (unlikely(num <= 0 || gen < 0)) {
+                    return Object();
+                }
+    -
+    +#endif
+                Ref r;
+                r.num = num;
+                r.gen = gen;

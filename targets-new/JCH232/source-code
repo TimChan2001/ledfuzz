@@ -1,0 +1,91 @@
+In expr.c:
+
+84 /*
+85 ** Set the collating sequence for expression pExpr to be the collating
+86 ** sequence named by pToken.   Return a pointer to a new Expr node that
+87 ** implements the COLLATE operator.
+88 **
+89 ** If a memory allocation error occurs, that fact is recorded in pParse->db
+90 ** and the pExpr parameter is returned unchanged.
+91 */
+92 Expr *sqlite3ExprAddCollateToken(
+93   Parse *pParse,           /* Parsing context */
+94   Expr *pExpr,             /* Add the "COLLATE" clause to this expression */
+95   const Token *pCollName,  /* Name of collating sequence */
+96   int dequote              /* True to dequote pCollName */
+97 ){
+98   if( pCollName->n>0 ){
+99     Expr *pNew = sqlite3ExprAlloc(pParse->db, TK_COLLATE, pCollName, 1);
+100     if( pNew ){
+101       pNew->pLeft = pExpr;
+102       pNew->flags |= EP_Collate|EP_Skip;
+103       pExpr = pNew;
+104     }
+105   }
+106   return pExpr;
+107 }
+
+In expr.c:
+788 /*
+789 ** This routine is the core allocator for Expr nodes.
+790 **
+791 ** Construct a new expression node and return a pointer to it.  Memory
+792 ** for this node and for the pToken argument is a single allocation
+793 ** obtained from sqlite3DbMalloc().  The calling function
+794 ** is responsible for making sure the node eventually gets freed.
+795 **
+796 ** If dequote is true, then the token (if it exists) is dequoted.
+797 ** If dequote is false, no dequoting is performed.  The deQuote
+798 ** parameter is ignored if pToken is NULL or if the token does not
+799 ** appear to be quoted.  If the quotes were of the form "..." (double-quotes)
+800 ** then the EP_DblQuoted flag is set on the expression node.
+801 **
+802 ** Special case:  If op==TK_INTEGER and pToken points to a string that
+803 ** can be translated into a 32-bit integer, then the token is not
+804 ** stored in u.zToken.  Instead, the integer values is written
+805 ** into u.iValue and the EP_IntValue flag is set.  No extra storage
+806 ** is allocated to hold the integer text and the dequote flag is ignored.
+807 */
+808 Expr *sqlite3ExprAlloc(
+809   sqlite3 *db,            /* Handle for sqlite3DbMallocRawNN() */
+810   int op,                 /* Expression opcode */
+811   const Token *pToken,    /* Token argument.  Might be NULL */
+812   int dequote             /* True to dequote */
+813 ){
+814   Expr *pNew;
+815   int nExtra = 0;
+816   int iValue = 0;
+817 
+818   assert( db!=0 );
+819   if( pToken ){
+820     if( op!=TK_INTEGER || pToken->z==0
+821           || sqlite3GetInt32(pToken->z, &iValue)==0 ){
+822       nExtra = pToken->n+1;
+823       assert( iValue>=0 );
+824     }
+825   }
+826   pNew = sqlite3DbMallocRawNN(db, sizeof(Expr)+nExtra);
+827   if( pNew ){
+828     memset(pNew, 0, sizeof(Expr));
+829     pNew->op = (u8)op;
+830     pNew->iAgg = -1;
+831     if( pToken ){
+832       if( nExtra==0 ){
+833         pNew->flags |= EP_IntValue|EP_Leaf|(iValue?EP_IsTrue:EP_IsFalse);
+834         pNew->u.iValue = iValue;
+835       }else{
+836         pNew->u.zToken = (char*)&pNew[1];
+837         assert( pToken->z!=0 || pToken->n==0 );
+838         if( pToken->n ) memcpy(pNew->u.zToken, pToken->z, pToken->n);
+839         pNew->u.zToken[pToken->n] = 0;
+840         if( dequote && sqlite3Isquote(pNew->u.zToken[0]) ){
+841           sqlite3DequoteExpr(pNew);
+842         }
+843       }
+844     }
+845 #if SQLITE_MAX_EXPR_DEPTH>0
+846     pNew->nHeight = 1;
+847 #endif  
+848   }
+849   return pNew;
+850 }

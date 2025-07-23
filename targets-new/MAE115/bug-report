@@ -1,0 +1,45 @@
+Vulnerability Type: The tls_decrypt_ticket function in ssl/t1_lib.c in OpenSSL before 1.1.0 does not consider the HMAC size during validation of the ticket length, which allows remote attackers to cause a denial of service via a ticket that is too short.
+Crash/Trigger Point(s): in tls_decrypt_ticket t1_lib.c:1925
+Bug Call Trace:
+
+    #1  0x0000000000549638 in tls_decrypt_ticket (s=0x624000010100, etick=<optimized out>, eticklen=<optimized out>, sess_id=<optimized out>, 
+        sesslen=<optimized out>, psess=<optimized out>) at ssl/t1_lib.c:1925
+    #2  0x00000000005ca86b in tls_parse_ctos_psk (s=<optimized out>, pkt=<optimized out>, context=<optimized out>, x=<optimized out>, chainidx=<optimized out>)
+        at ssl/statem/extensions_srvr.c:1187
+    #3  0x000000000059dfe2 in tls_parse_extension (s=0x624000010100, idx=<optimized out>, context=128, exts=0x619000008780, x=0x8135, chainidx=0)
+        at ssl/statem/extensions.c:714
+    #4  0x0000000000536815 in ssl_get_prev_session (s=<optimized out>, hello=<optimized out>) at ssl/ssl_sess.c:518
+    #5  0x0000000000639999 in tls_early_post_process_client_hello (s=<optimized out>) at ssl/statem/statem_srvr.c:1840
+    #6  0x00000000006349f7 in tls_post_process_client_hello (s=0x624000010100, wst=<optimized out>) at ssl/statem/statem_srvr.c:2260
+    #7  0x00000000006348ec in ossl_statem_server_post_process_message (s=0x624000010100, wst=WORK_MORE_A) at ssl/statem/statem_srvr.c:1252
+    #8  0x00000000005d796d in read_state_machine (s=0x624000010100) at ssl/statem/statem.c:665
+    #9  0x00000000005d5b2b in state_machine (s=<optimized out>, server=<optimized out>) at ssl/statem/statem.c:435
+    #10 0x0000000000504bb4 in SSL_do_handshake (s=0x624000010100) at ssl/ssl_lib.c:3862
+    #11 0x000000000050480d in SSL_accept (s=<optimized out>) at ssl/ssl_lib.c:1732
+    --Type <RET> for more, q to quit, c to continue without paging--
+    #12 0x00000000005063aa in SSL_read_early_data (s=0x624000010100, buf=0x7ffe104679a0, num=16384, readbytes=0x7ffe1046baa0) at ssl/ssl_lib.c:1907
+    #13 0x00000000004c9996 in FuzzerTestOneInput (buf=<optimized out>, len=<optimized out>) at fuzz/server.c:625
+    #14 0x0000000000e25164 in ExecuteFilesOnyByOne (argc=<optimized out>, argv=<optimized out>) at /root/magma/fuzzers/afl/src/afl_driver.cpp:167
+    #15 0x0000000000e243f1 in main (argc=2, argv=0x1) at /root/magma/fuzzers/afl/src/afl_driver.cpp:183
+
+Patch:
+    diff --git a/ssl/t1_lib.c b/ssl/t1_lib.c
+    index 923cf5b5cd..6ed2362391 100644
+    --- a/ssl/t1_lib.c
+    +++ b/ssl/t1_lib.c
+    @@ -1550,11 +1556,18 @@ SSL_TICKET_STATUS tls_decrypt_ticket(SSL *s, const unsigned char *etick,
+        }
+    
+        /* Sanity check ticket length: must exceed keyname + IV + HMAC */
+    +#ifdef MAGMA_ENABLE_FIXES
+        if (eticklen <=
+            TLSEXT_KEYNAME_LENGTH + EVP_CIPHER_CTX_iv_length(ctx) + mlen) {
+    +#else
+    +    if (eticklen < 48) {
+    +#endif
+            ret = SSL_TICKET_NO_DECRYPT;
+            goto end;
+        }
+        eticklen -= mlen;
+        /* Check HMAC of encrypted ticket */
+        if (ssl_hmac_update(hctx, etick, eticklen) <= 0
