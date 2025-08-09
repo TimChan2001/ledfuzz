@@ -1,0 +1,194 @@
+in libpng_read_fuzzer.cc
+
+    int passes = png_set_interlace_handling(png_handler.png_ptr);
+
+    png_read_update_info(png_handler.png_ptr, png_handler.info_ptr);
+
+    png_handler.row_ptr = png_malloc(
+        png_handler.png_ptr, png_get_rowbytes(png_handler.png_ptr,
+                                                png_handler.info_ptr));
+
+    for (int pass = 0; pass < passes; ++pass) {
+        for (png_uint_32 y = 0; y < height; ++y) {
+        png_read_row(png_handler.png_ptr,
+                    static_cast<png_bytep>(png_handler.row_ptr), nullptr);
+        }
+    }
+
+    png_read_end(png_handler.png_ptr, png_handler.end_info_ptr);
+
+    PNG_CLEANUP
+    return 0;
+
+in pngtran.c:
+
+4213 static void
+4214 png_do_expand_palette(png_structrp png_ptr, png_row_infop row_info,
+4215     png_bytep row, png_const_colorp palette, png_const_bytep trans_alpha,
+4216     int num_trans)
+4217 {
+4218    int shift, value;
+4219    png_bytep sp, dp;
+4220    png_uint_32 i;
+4221    png_uint_32 row_width=row_info->width;
+4222 
+4223    png_debug(1, "in png_do_expand_palette");
+4224 
+4225    if (row_info->color_type == PNG_COLOR_TYPE_PALETTE)
+4226    {
+4227       if (row_info->bit_depth < 8)
+4228       {
+4229          switch (row_info->bit_depth)
+4230          {
+4231             case 1:
+4232             {
+4233                sp = row + (size_t)((row_width - 1) >> 3);
+4234                dp = row + (size_t)row_width - 1;
+4235                shift = 7 - (int)((row_width + 7) & 0x07);
+4236                for (i = 0; i < row_width; i++)
+4237                {
+4238                   if ((*sp >> shift) & 0x01)
+4239                      *dp = 1;
+4240 
+4241                   else
+4242                      *dp = 0;
+4243 
+4244                   if (shift == 7)
+4245                   {
+4246                      shift = 0;
+4247                      sp--;
+4248                   }
+4249 
+4250                   else
+4251                      shift++;
+4252 
+4253                   dp--;
+4254                }
+4255                break;
+4256             }
+4257 
+4258             case 2:
+4259             {
+4260                sp = row + (size_t)((row_width - 1) >> 2);
+4261                dp = row + (size_t)row_width - 1;
+4262                shift = (int)((3 - ((row_width + 3) & 0x03)) << 1);
+4263                for (i = 0; i < row_width; i++)
+4264                {
+4265                   value = (*sp >> shift) & 0x03;
+4266                   *dp = (png_byte)value;
+4267                   if (shift == 6)
+4268                   {
+4269                      shift = 0;
+4270                      sp--;
+4271                   }
+4272 
+4273                   else
+4274                      shift += 2;
+4275 
+4276                   dp--;
+4277                }
+4278                break;
+4279             }
+4280 
+4281             case 4:
+4282             {
+4283                sp = row + (size_t)((row_width - 1) >> 1);
+4284                dp = row + (size_t)row_width - 1;
+4285                shift = (int)((row_width & 0x01) << 2);
+4286                for (i = 0; i < row_width; i++)
+4287                {
+4288                   value = (*sp >> shift) & 0x0f;
+4289                   *dp = (png_byte)value;
+4290                   if (shift == 4)
+4291                   {
+4292                      shift = 0;
+4293                      sp--;
+4294                   }
+4295 
+4296                   else
+4297                      shift += 4;
+4298 
+4299                   dp--;
+4300                }
+4301                break;
+4302             }
+4303 
+4304             default:
+4305                break;
+4306          }
+4307          row_info->bit_depth = 8;
+4308          row_info->pixel_depth = 8;
+4309          row_info->rowbytes = row_width;
+4310       }
+4311 
+4312       if (row_info->bit_depth == 8)
+4313       {
+4314          {
+4315             if (num_trans > 0)
+4316             {
+4317                sp = row + (size_t)row_width - 1;
+4318                dp = row + ((size_t)row_width << 2) - 1;
+4319 
+4320                i = 0;
+4321 #ifdef PNG_ARM_NEON_INTRINSICS_AVAILABLE
+4322                if (png_ptr->riffled_palette != NULL)
+4323                {
+4324                   /* The RGBA optimization works with png_ptr->bit_depth == 8
+4325                    * but sometimes row_info->bit_depth has been changed to 8.
+4326                    * In these cases, the palette hasn't been riffled.
+4327                    */
+4328                   i = png_do_expand_palette_rgba8_neon(png_ptr, row_info, row,
+4329                       &sp, &dp);
+4330                }
+4331 #else
+4332                PNG_UNUSED(png_ptr)
+4333 #endif
+4334 
+4335                for (; i < row_width; i++)
+4336                {
+4337                   if ((int)(*sp) >= num_trans)
+4338                      *dp-- = 0xff;
+4339                   else
+4340                      *dp-- = trans_alpha[*sp];
+4341                   *dp-- = palette[*sp].blue;
+4342                   *dp-- = palette[*sp].green;
+4343                   *dp-- = palette[*sp].red;
+4344                   sp--;
+4345                }
+4346                row_info->bit_depth = 8;
+4347                row_info->pixel_depth = 32;
+4348                row_info->rowbytes = row_width * 4;
+4349                row_info->color_type = 6;
+4350                row_info->channels = 4;
+4351             }
+4352 
+4353             else
+4354             {
+4355                sp = row + (size_t)row_width - 1;
+4356                dp = row + (size_t)(row_width * 3) - 1;
+4357                i = 0;
+4358 #ifdef PNG_ARM_NEON_INTRINSICS_AVAILABLE
+4359                i = png_do_expand_palette_rgb8_neon(png_ptr, row_info, row,
+4360                    &sp, &dp);
+4361 #else
+4362                PNG_UNUSED(png_ptr)
+4363 #endif
+4364 
+4365                for (; i < row_width; i++)
+4366                {
+4367                   *dp-- = palette[*sp].blue;
+4368                   *dp-- = palette[*sp].green;
+4369                   *dp-- = palette[*sp].red;
+4370                   sp--;
+4371                }
+4372 
+4373                row_info->bit_depth = 8;
+4374                row_info->pixel_depth = 24;
+4375                row_info->rowbytes = row_width * 3;
+4376                row_info->color_type = 2;
+4377                row_info->channels = 3;
+4378             }
+4379          }
+4380       }
+4381    }
+4382 }

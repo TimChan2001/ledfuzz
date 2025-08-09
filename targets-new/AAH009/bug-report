@@ -1,0 +1,220 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in horAcc8 tif_predict.c:305-307
+Bug Call Trace:
+
+=================================================================
+==1435592==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60b000000156 at pc 0x000000609182 bp 0x7ffef4697f50 sp 0x7ffef4697f48
+READ of size 1 at 0x60b000000156 thread T0
+    #0 0x609181 in horAcc8 /root/magma_asan/targets/libtiff/repo/libtiff/tif_predict.c:305:37
+    #1 0x60a02f in PredictorDecodeTile /root/magma_asan/targets/libtiff/repo/libtiff/tif_predict.c:524:9
+    #2 0x556e39 in _TIFFReadEncodedTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1092:9
+    #3 0x556921 in _TIFFReadTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1042:13
+    #4 0x52bb05 in gtTileContig /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:673:10
+    #5 0x529bf1 in TIFFRGBAImageGet /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:511:12
+    #6 0x529f3b in TIFFReadRGBAImageOriented /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:530:8
+    #7 0x4c9ddf in LLVMFuzzerTestOneInput /root/magma_asan/targets/libtiff/repo/contrib/oss-fuzz/tiff_read_rgba_fuzzer.cc:94:7
+    #8 0x4cbd63 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #9 0x4caff0 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #10 0x7fcba530e082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #11 0x41ec9d in _start (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x41ec9d)
+
+0x60b000000156 is located 0 bytes to the right of 102-byte region [0x60b0000000f0,0x60b000000156)
+allocated by thread T0 here:
+    #0 0x4973dd in malloc (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x4973dd)
+    #1 0x567574 in _TIFFmalloc /root/magma_asan/targets/libtiff/repo/libtiff/tif_unix.c:314:10
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /root/magma_asan/targets/libtiff/repo/libtiff/tif_predict.c:308:37 in horAcc8
+Shadow bytes around the buggy address:
+  0x0c167fff7fd0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c167fff7fe0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c167fff7ff0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c167fff8000: fa fa fa fa fa fa fa fa fd fd fd fd fd fd fd fd
+  0x0c167fff8010: fd fd fd fd fd fa fa fa fa fa fa fa fa fa 00 00
+=>0x0c167fff8020: 00 00 00 00 00 00 00 00 00 00[06]fa fa fa fa fa
+  0x0c167fff8030: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c167fff8040: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c167fff8050: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c167fff8060: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c167fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1435592==ABORTING
+
+
+Patch:
+
+diff --git a/libtiff/tif_predict.c b/libtiff/tif_predict.c
+index b775663..98d7c6b 100644
+--- a/libtiff/tif_predict.c
++++ b/libtiff/tif_predict.c
+@@ -282,12 +282,17 @@ horAcc8(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	tmsize_t stride = PredictorState(tif)->stride;
+ 
+ 	unsigned char* cp = (unsigned char*) cp0;
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%stride)!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horAcc8",
+                      "%s", "(cc%stride)!=0");
+         return 0;
+     }
++#endif
+
+ 	if (cc > stride) {
+ 		/*
+@@ -351,12 +356,17 @@ horAcc16(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint16* wp = (uint16*) cp0;
+ 	tmsize_t wc = cc / 2;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%(2*stride))!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horAcc16",
+                      "%s", "cc%(2*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+ 	if (wc > stride) {
+ 		wc -= stride;
+@@ -386,12 +396,17 @@ horAcc32(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint32* wp = (uint32*) cp0;
+ 	tmsize_t wc = cc / 4;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%(4*stride))!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horAcc32",
+                      "%s", "cc%(4*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+ 	if (wc > stride) {
+ 		wc -= stride;
+@@ -416,12 +431,17 @@ fpAcc(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint8 *cp = (uint8 *) cp0;
+ 	uint8 *tmp;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if(cc%(bps*stride)!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "fpAcc",
+                      "%s", "cc%(bps*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+     tmp = (uint8 *)_TIFFmalloc(cc);
+ 	if (!tmp)
+@@ -486,12 +506,19 @@ PredictorDecodeTile(TIFF* tif, uint8* op0, tmsize_t occ0, uint16 s)
+ 	if ((*sp->decodetile)(tif, op0, occ0, s)) {
+ 		tmsize_t rowsize = sp->rowsize;
+ 		assert(rowsize > 0);
++
++#ifdef MAGMA_ENABLE_FIXES
+ 		if((occ0%rowsize) !=0)
+         {
+             TIFFErrorExt(tif->tif_clientdata, "PredictorDecodeTile",
+                          "%s", "occ0%rowsize != 0");
+             return 0;
+         }
++#endif
+ 		assert(sp->decodepfunc != NULL);
+ 		while (occ0 > 0) {
+ 			if( !(*sp->decodepfunc)(tif, op0, rowsize) )
+@@ -512,12 +539,17 @@ horDiff8(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	tmsize_t stride = sp->stride;
+ 	unsigned char* cp = (unsigned char*) cp0;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%stride)!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horDiff8",
+                      "%s", "(cc%stride)!=0");
+         return 0;
+     }
++#endif
+ 
+ 	if (cc > stride) {
+ 		cc -= stride;
+@@ -567,12 +599,17 @@ horDiff16(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint16 *wp = (uint16*) cp0;
+ 	tmsize_t wc = cc/2;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%(2*stride))!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horDiff8",
+                      "%s", "(cc%(2*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+ 	if (wc > stride) {
+ 		wc -= stride;
+@@ -607,12 +644,17 @@ horDiff32(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint32 *wp = (uint32*) cp0;
+ 	tmsize_t wc = cc/4;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%(4*stride))!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "horDiff32",
+                      "%s", "(cc%(4*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+ 	if (wc > stride) {
+ 		wc -= stride;
+@@ -652,12 +694,17 @@ fpDiff(TIFF* tif, uint8* cp0, tmsize_t cc)
+ 	uint8 *cp = (uint8 *) cp0;
+ 	uint8 *tmp;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     if((cc%(bps*stride))!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "fpDiff",
+                      "%s", "(cc%(bps*stride))!=0");
+         return 0;
+     }
++#endif
+ 
+     tmp = (uint8 *)_TIFFmalloc(cc);
+ 	if (!tmp)
+@@ -730,6 +777,8 @@ PredictorEncodeTile(TIFF* tif, uint8* bp0, tmsize_t cc0, uint16 s)
+ 
+ 	rowsize = sp->rowsize;
+ 	assert(rowsize > 0);
++
++#ifdef MAGMA_ENABLE_FIXES
+ 	if((cc0%rowsize)!=0)
+     {
+         TIFFErrorExt(tif->tif_clientdata, "PredictorEncodeTile",
+@@ -737,6 +786,11 @@ PredictorEncodeTile(TIFF* tif, uint8* bp0, tmsize_t cc0, uint16 s)
+         _TIFFfree( working_copy );
+         return 0;
+     }
++#endif
+ 	while (cc > 0) {
+ 		(*sp->encodepfunc)(tif, bp, rowsize);
+ 		cc -= rowsize;

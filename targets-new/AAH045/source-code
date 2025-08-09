@@ -1,0 +1,183 @@
+in GfxState.c:
+
+5579 void GfxImageColorMap::getGray(const unsigned char *x, GfxGray *gray)
+5580 {
+5581     GfxColor color;
+5582     int i;
+5583 
+5584     if (colorSpace2) {
+5585         for (i = 0; i < nComps2; ++i) {
+5586             color.c[i] = lookup2[i][x[0]];
+5587         }
+5588         colorSpace2->getGray(&color, gray);
+5589     } else {
+5590         for (i = 0; i < nComps; ++i) {
+5591             color.c[i] = lookup2[i][x[i]];
+5592         }
+5593         colorSpace->getGray(&color, gray);
+5594     }
+5595 }
+
+in ImageOutputDev.cc:
+
+348 void ImageOutputDev::writeImageFile(ImgWriter *writer, ImageFormat format, const char *ext, Stream *str, int width, int height, GfxImageColorMap *colorMap)
+349 {
+350     FILE *f = nullptr; /* squelch bogus compiler warning */
+351     ImageStream *imgStr = nullptr;
+352     unsigned char *row;
+353     unsigned char *rowp;
+354     unsigned char *p;
+355     GfxRGB rgb;
+356     GfxCMYK cmyk;
+357     GfxGray gray;
+358 #ifdef MAGMA_ENABLE_FIXES
+359     unsigned char zero[gfxColorMaxComps];
+360 #else
+361     unsigned char zero[1];
+362 #endif
+363     int invert_bits;
+364 
+365     if (writer) {
+366         setFilename(ext);
+367         ++imgNum;
+368         if (!(f = fopen(fileName, "wb"))) {
+369             error(errIO, -1, "Couldn't open image file '{0:s}'", fileName);
+370             return;
+371         }
+372 
+373         if (!writer->init(f, width, height, 72, 72)) {
+374             error(errIO, -1, "Error writing '{0:s}'", fileName);
+375             return;
+376         }
+377     }
+378 
+379     if (format != imgMonochrome) {
+380         // initialize stream
+381         imgStr = new ImageStream(str, width, colorMap->getNumPixelComps(), colorMap->getBits());
+382         imgStr->reset();
+383     } else {
+384         // initialize stream
+385         str->reset();
+386     }
+387 
+388     int pixelSize = sizeof(unsigned int);
+389     if (format == imgRGB48)
+390         pixelSize = 2 * sizeof(unsigned int);
+391 
+392     row = (unsigned char *)gmallocn(width, pixelSize);
+393 
+394     // PDF masks use 0 = draw current color, 1 = leave unchanged.
+395     // We invert this to provide the standard interpretation of alpha
+396     // (0 = transparent, 1 = opaque). If the colorMap already inverts
+397     // the mask we leave the data unchanged.
+398     invert_bits = 0xff;
+399     if (colorMap) {
+400         memset(zero, 0, sizeof(zero));
+401         colorMap->getGray(zero, &gray);
+402         if (colToByte(gray) == 0)
+403             invert_bits = 0x00;
+404     }
+405 
+406     // for each line...
+407     for (int y = 0; y < height; y++) {
+408         switch (format) {
+409         case imgRGB:
+410             p = imgStr->getLine();
+411             rowp = row;
+412             for (int x = 0; x < width; ++x) {
+413                 if (p) {
+414                     colorMap->getRGB(p, &rgb);
+415                     *rowp++ = colToByte(rgb.r);
+416                     *rowp++ = colToByte(rgb.g);
+417                     *rowp++ = colToByte(rgb.b);
+418                     p += colorMap->getNumPixelComps();
+419                 } else {
+420                     *rowp++ = 0;
+421                     *rowp++ = 0;
+422                     *rowp++ = 0;
+423                 }
+424             }
+425             if (writer)
+426                 writer->writeRow(&row);
+427             break;
+428 
+429         case imgRGB48: {
+430             p = imgStr->getLine();
+431             unsigned short *rowp16 = reinterpret_cast<unsigned short *>(row);
+432             for (int x = 0; x < width; ++x) {
+433                 if (p) {
+434                     colorMap->getRGB(p, &rgb);
+435                     *rowp16++ = colToShort(rgb.r);
+436                     *rowp16++ = colToShort(rgb.g);
+437                     *rowp16++ = colToShort(rgb.b);
+438                     p += colorMap->getNumPixelComps();
+439                 } else {
+440                     *rowp16++ = 0;
+441                     *rowp16++ = 0;
+442                     *rowp16++ = 0;
+443                 }
+444             }
+445             if (writer)
+446                 writer->writeRow(&row);
+447             break;
+448         }
+449 
+450         case imgCMYK:
+451             p = imgStr->getLine();
+452             rowp = row;
+453             for (int x = 0; x < width; ++x) {
+454                 if (p) {
+455                     colorMap->getCMYK(p, &cmyk);
+456                     *rowp++ = colToByte(cmyk.c);
+457                     *rowp++ = colToByte(cmyk.m);
+458                     *rowp++ = colToByte(cmyk.y);
+459                     *rowp++ = colToByte(cmyk.k);
+460                     p += colorMap->getNumPixelComps();
+461                 } else {
+462                     *rowp++ = 0;
+463                     *rowp++ = 0;
+464                     *rowp++ = 0;
+465                     *rowp++ = 0;
+466                 }
+467             }
+468             if (writer)
+469                 writer->writeRow(&row);
+470             break;
+471 
+472         case imgGray:
+473             p = imgStr->getLine();
+474             rowp = row;
+475             for (int x = 0; x < width; ++x) {
+476                 if (p) {
+477                     colorMap->getGray(p, &gray);
+478                     *rowp++ = colToByte(gray);
+479                     p += colorMap->getNumPixelComps();
+480                 } else {
+481                     *rowp++ = 0;
+482                 }
+483             }
+484             if (writer)
+485                 writer->writeRow(&row);
+486             break;
+487 
+488         case imgMonochrome:
+489             int size = (width + 7) / 8;
+490             for (int x = 0; x < size; x++)
+491                 row[x] = str->getChar() ^ invert_bits;
+492             if (writer)
+493                 writer->writeRow(&row);
+494             break;
+495         }
+496     }
+497 
+498     gfree(row);
+499     if (format != imgMonochrome) {
+500         imgStr->close();
+501         delete imgStr;
+502     }
+503     str->close();
+504     if (writer) {
+505         writer->close();
+506         fclose(f);
+507     }
+508 }

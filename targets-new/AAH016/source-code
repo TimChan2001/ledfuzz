@@ -1,0 +1,124 @@
+in tif_next.c:
+46 static int
+47 NeXTDecode(TIFF* tif, uint8* buf, tmsize_t occ, uint16 s)
+48 {
+49      static const char module[] = "NeXTDecode";
+50      unsigned char *bp, *op;
+51      tmsize_t cc;
+52      uint8* row;
+53      tmsize_t scanline, n;
+54 
+55      (void) s;
+56      /*
+57       * Each scanline is assumed to start off as all
+58       * white (we assume a PhotometricInterpretation
+59       * of ``min-is-black'').
+60       */
+61      for (op = (unsigned char*) buf, cc = occ; cc-- > 0;)
+62              *op++ = 0xff;
+63 
+64      bp = (unsigned char *)tif->tif_rawcp;
+65      cc = tif->tif_rawcc;
+66      scanline = tif->tif_scanlinesize;
+67      if (occ % scanline)
+68      {
+69              TIFFErrorExt(tif->tif_clientdata, module, "Fractional scanlines cannot be read");
+70              return (0);
+71      }
+72      for (row = buf; cc > 0 && occ > 0; occ -= scanline, row += scanline) {
+73              n = *bp++;
+74              cc--;
+75              switch (n) {
+76              case LITERALROW:
+77                      /*
+78                       * The entire scanline is given as literal values.
+79                       */
+80                      if (cc < scanline)
+81                              goto bad;
+82                      _TIFFmemcpy(row, bp, scanline);
+83                      bp += scanline;
+84                      cc -= scanline;
+85                      break;
+86              case LITERALSPAN: {
+87                      tmsize_t off;
+88                      /*
+89                       * The scanline has a literal span that begins at some
+90                       * offset.
+91                       */
+92                      if( cc < 4 )
+93                              goto bad;
+94                      off = (bp[0] * 256) + bp[1];
+95                      n = (bp[2] * 256) + bp[3];
+96                      if (cc < 4+n || off+n > scanline)
+97                              goto bad;
+98                      _TIFFmemcpy(row+off, bp+4, n);
+99                      bp += 4+n;
+100                     cc -= 4+n;
+101                     break;
+102             }
+103             default: {
+104                     uint32 npixels = 0, grey;
+105                     tmsize_t op_offset = 0;
+106                     uint32 imagewidth = tif->tif_dir.td_imagewidth;
+107             if( isTiled(tif) )
+108                 imagewidth = tif->tif_dir.td_tilewidth;
+109 
+110                     /*
+111                      * The scanline is composed of a sequence of constant
+112                      * color ``runs''.  We shift into ``run mode'' and
+113                      * interpret bytes as codes of the form
+114                      * <color><npixels> until we've filled the scanline.
+115                      */
+116                     op = row;
+117                     for (;;) {
+118                             grey = (uint32)((n>>6) & 0x3);
+119                             n &= 0x3f;
+120                             /*
+121                              * Ensure the run does not exceed the scanline
+122                              * bounds, potentially resulting in a security
+123                              * issue.
+124                              */
+125 #ifdef MAGMA_ENABLE_FIXES
+126                             while (n-- > 0 && npixels < imagewidth && op_offset < scanline)
+127 #else
+128                 while (n-- > 0 && npixels < imagewidth)
+129 #endif
+130                 {
+131                                     SETPIXEL(op, grey);
+132                 }
+133                             if (npixels >= imagewidth)
+134                                     break;
+135 #ifdef MAGMA_ENABLE_FIXES
+136                 if (op_offset >= scanline ) {
+137                     TIFFErrorExt(tif->tif_clientdata, module, "Invalid data for scanline %ld",
+138                         (long) tif->tif_row);
+139                     return (0);
+140                 }
+141 #endif
+142                             if (cc == 0)
+143                                     goto bad;
+144                             n = *bp++;
+145                             cc--;
+146                     }
+147                     break;
+148             }
+149             }
+150     }
+151     tif->tif_rawcp = (uint8*) bp;
+152     tif->tif_rawcc = cc;
+153     return (1);
+154 bad:
+155     TIFFErrorExt(tif->tif_clientdata, module, "Not enough data for scanline %ld",
+156         (long) tif->tif_row);
+157     return (0);
+158 }
+
+in tif_next.c:
+#define SETPIXEL(op, v) {			\
+	switch (npixels++ & 3) {		\
+	case 0:	op[0]  = (unsigned char) ((v) << 6); break;	\
+	case 1:	op[0] |= (v) << 4; break;	\
+	case 2:	op[0] |= (v) << 2; break;	\
+	case 3:	*op++ |= (v);	   op_offset++; break;	\
+	}					\
+}

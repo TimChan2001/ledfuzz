@@ -1,0 +1,157 @@
+in exif.c:
+
+218 /* {{{ php_strnlen
+219  * get length of string if buffer if less than buffer size or buffer size */
+220 static size_t php_strnlen(char* str, size_t maxlen) {
+221     size_t len = 0;
+222 
+223     if (str && maxlen && *str) {
+224             do {
+225                     len++;
+226             } while (--maxlen && *(++str));
+227     }
+228     return len;
+229 }
+230 /* }}} */
+
+in exif.c:
+
+2189 /* {{{ exif_iif_add_value
+2190  Add a value to image_info
+2191 */
+2192 static void exif_iif_add_value(image_info_type *image_info, int section_index, char *name, int tag, int format, int length, void* value, size_t value_len, int motorola_intel)
+2193 {
+2194    size_t idex;
+2195    void *vptr, *vptr_end;
+2196    image_info_value *info_value;
+2197    image_info_data  *info_data;
+2198 
+2199    if (length < 0) {
+2200            return;
+2201    }
+2202 
+2203    info_data = exif_alloc_image_info_data(&image_info->info_list[section_index]);
+2204    memset(info_data, 0, sizeof(image_info_data));
+2205    info_data->tag    = tag;
+2206    info_data->format = format;
+2207    info_data->length = length;
+2208    info_data->name   = estrdup(name);
+2209    info_value        = &info_data->value;
+2210 
+2211    switch (format) {
+2212            case TAG_FMT_STRING:
+2213                    if (length > value_len) {
+2214                            exif_error_docref("exif_iif_add_value" EXIFERR_CC, image_info, E_WARNING, "length > value_len: %d > %zu", length, value_len);
+2215                            value = NULL;
+2216                    }
+2217                    if (value) {
+2218                            length = (int)php_strnlen(value, length);
+2219                            info_value->s = estrndup(value, length);
+2220                            info_data->length = length;
+2221                    } else {
+2222                            info_data->length = 0;
+2223                            info_value->s = estrdup("");
+2224                    }
+2225                    break;
+2226 
+2227            default:
+2228                    /* Standard says more types possible but skip them...
+2229                     * but allow users to handle data if they know how to
+2230                     * So not return but use type UNDEFINED
+2231                     * return;
+2232                     */
+2233                    info_data->tag = TAG_FMT_UNDEFINED;/* otherwise not freed from memory */
+2234            case TAG_FMT_SBYTE:
+2235            case TAG_FMT_BYTE:
+2236            /* in contrast to strings bytes do not need to allocate buffer for NULL if length==0 */
+2237                    if (!length)
+2238                            break;
+2239            case TAG_FMT_UNDEFINED:
+2240                    if (length > value_len) {
+2241                            exif_error_docref("exif_iif_add_value" EXIFERR_CC, image_info, E_WARNING, "length > value_len: %d > %zu", length, value_len);
+2242                            value = NULL;
+2243                    }
+2244                    if (value) {
+2245                            if (tag == TAG_MAKER_NOTE) {
+2246                                    length = (int) php_strnlen(value, length);
+2247                            }
+2248 
+2249                            /* do not recompute length here */
+2250                            info_value->s = estrndup(value, length);
+2251                            info_data->length = length;
+2252                    } else {
+2253                            info_data->length = 0;
+2254                            info_value->s = estrdup("");
+2255                    }
+2256                    break;
+2257 
+2258            case TAG_FMT_USHORT:
+2259            case TAG_FMT_ULONG:
+2260            case TAG_FMT_URATIONAL:
+2261            case TAG_FMT_SSHORT:
+2262            case TAG_FMT_SLONG:
+2263            case TAG_FMT_SRATIONAL:
+2264            case TAG_FMT_SINGLE:
+2265            case TAG_FMT_DOUBLE:
+2266                    if (length==0) {
+2267                            break;
+2268                    } else
+2269                    if (length>1) {
+2270                            info_value->list = safe_emalloc(length, sizeof(image_info_value), 0);
+2271                    } else {
+2272                            info_value = &info_data->value;
+2273                    }
+2274                    vptr_end = (char *) value + value_len;
+2275                    for (idex=0,vptr=value; idex<(size_t)length; idex++,vptr=(char *) vptr + php_tiff_bytes_per_format[format]) {
+2276                            if ((char *) vptr_end - (char *) vptr < php_tiff_bytes_per_format[format]) {
+2277                                    exif_error_docref("exif_iif_add_value" EXIFERR_CC, image_info, E_WARNING, "Value too short");
+2278                                    break;
+2279                            }
+2280                            if (length>1) {
+2281                                    info_value = &info_data->value.list[idex];
+2282                            }
+2283                            switch (format) {
+2284                                    case TAG_FMT_USHORT:
+2285                                            info_value->u = php_ifd_get16u(vptr, motorola_intel);
+2286                                            break;
+2287 
+2288                                    case TAG_FMT_ULONG:
+2289                                            info_value->u = php_ifd_get32u(vptr, motorola_intel);
+2290                                            break;
+2291 
+2292                                    case TAG_FMT_URATIONAL:
+2293                                            info_value->ur.num = php_ifd_get32u(vptr, motorola_intel);
+2294                                            info_value->ur.den = php_ifd_get32u(4+(char *)vptr, motorola_intel);
+2295                                            break;
+2296 
+2297                                    case TAG_FMT_SSHORT:
+2298                                            info_value->i = php_ifd_get16s(vptr, motorola_intel);
+2299                                            break;
+2300 
+2301                                    case TAG_FMT_SLONG:
+2302                                            info_value->i = php_ifd_get32s(vptr, motorola_intel);
+2303                                            break;
+2304 
+2305                                    case TAG_FMT_SRATIONAL:
+2306                                            info_value->sr.num = php_ifd_get32u(vptr, motorola_intel);
+2307                                            info_value->sr.den = php_ifd_get32u(4+(char *)vptr, motorola_intel);
+2308                                            break;
+2309 
+2310                                    case TAG_FMT_SINGLE:
+2311 #ifdef EXIF_DEBUG
+2312                                            php_error_docref(NULL, E_WARNING, "Found value of type single");
+2313 #endif
+2314                                            info_value->f = php_ifd_get_float(value);
+2315                                            break;
+2316                                    case TAG_FMT_DOUBLE:
+2317 #ifdef EXIF_DEBUG
+2318                                            php_error_docref(NULL, E_WARNING, "Found value of type double");
+2319 #endif
+2320                                            info_value->d = php_ifd_get_double(value);
+2321                                            break;
+2322                            }
+2323                    }
+2324    }
+2325    image_info->sections_found |= 1<<section_index;
+2326 }
+2327 /* }}} */
