@@ -1,0 +1,58 @@
+Vulnerability Type: null-pointer-dereference
+Crash/Trigger Point(s): 
+Bug Call Trace: in png_do_expand_palette pngrtran.c:4367
+
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==1435255==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008 (pc 0x000000510370 bp 0x0c220000000f sp 0x7fff2f3cf7c0 T0)
+==1435255==The signal is caused by a READ memory access.
+==1435255==Hint: address points to the zero page.
+    #0 0x510370 in png_do_expand_palette /root/magma_asan/targets/libpng/repo/pngrtran.c:4367:40
+    #1 0x50df11 in MAGMA_png_do_read_transformations /root/magma_asan/targets/libpng/repo/pngrtran.c:4791:10
+    #2 0x4ee38b in MAGMA_png_read_row /root/magma_asan/targets/libpng/repo/pngread.c:572:7
+    #3 0x4c83ea in LLVMFuzzerTestOneInput /root/magma_asan/targets/libpng/repo/contrib/oss-fuzz/libpng_read_fuzzer.cc:203:7
+    #4 0x4cbb33 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #5 0x4cadc0 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #6 0x7fce5f229082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #7 0x41c6fd in _start (/root/magma_asan/targets/libpng/out/libpng_read_fuzzer+0x41c6fd)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /root/magma_asan/targets/libpng/repo/pngrtran.c:4367:40 in png_do_expand_palette
+==1435255==ABORTING
+
+
+Patch:
+
+diff --git a/pngrtran.c b/pngrtran.c
+index 238f5af..4067087 100644
+--- a/pngrtran.c
++++ b/pngrtran.c
+@@ -1959,8 +1959,13 @@ png_read_transform_info(png_structrp png_ptr, png_inforp info_ptr)
+          info_ptr->bit_depth = 8;
+          info_ptr->num_trans = 0;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+          if (png_ptr->palette == NULL)
+             png_error (png_ptr, "Palette is NULL in indexed image");
++#endif
+       }
+       else
+       {
+diff --git a/pngset.c b/pngset.c
+index ec75dbe..80e7360 100644
+--- a/pngset.c
++++ b/pngset.c
+@@ -603,7 +603,12 @@ png_set_PLTE(png_structrp png_ptr, png_inforp info_ptr,
+ #        endif
+       ))
+    {
++#ifdef MAGMA_ENABLE_FIXES
+       png_error(png_ptr, "Invalid palette");
++#else
++      png_chunk_report(png_ptr, "Invalid palette", PNG_CHUNK_ERROR);
++      return;
++#endif
+    }
+ 
+    /* It may not actually be necessary to set png_ptr->palette here;
+
