@@ -1,0 +1,90 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in NeXTDecode tif_next.c:131
+Bug Call Trace:
+
+=================================================================
+==1436368==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x613000000368 at pc 0x0000005da7b8 bp 0x7ffcfa57bc90 sp 0x7ffcfa57bc88
+WRITE of size 1 at 0x613000000368 thread T0
+    #0 0x5da7b7 in NeXTDecode /root/magma_asan/targets/libtiff/repo/libtiff/tif_next.c:131:6
+    #1 0x554f00 in TIFFReadEncodedTile /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1021:33
+    #2 0x556a2d in _TIFFReadEncodedTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1065:16
+    #3 0x556921 in _TIFFReadTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1042:13
+    #4 0x52bb05 in gtTileContig /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:673:10
+    #5 0x529bf1 in TIFFRGBAImageGet /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:511:12
+    #6 0x529f3b in TIFFReadRGBAImageOriented /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:530:8
+    #7 0x4c9ddf in LLVMFuzzerTestOneInput /root/magma_asan/targets/libtiff/repo/contrib/oss-fuzz/tiff_read_rgba_fuzzer.cc:94:7
+    #8 0x4cbd63 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #9 0x4caff0 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #10 0x7f6d835e8082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #11 0x41ec9d in _start (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x41ec9d)
+
+0x613000000368 is located 0 bytes to the right of 360-byte region [0x613000000200,0x613000000368)
+allocated by thread T0 here:
+    #0 0x4973dd in malloc (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x4973dd)
+    #1 0x567574 in _TIFFmalloc /root/magma_asan/targets/libtiff/repo/libtiff/tif_unix.c:314:10
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /root/magma_asan/targets/libtiff/repo/libtiff/tif_next.c:134:6 in NeXTDecode
+Shadow bytes around the buggy address:
+  0x0c267fff8010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c267fff8020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c267fff8030: 00 00 00 00 00 00 00 00 fa fa fa fa fa fa fa fa
+  0x0c267fff8040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c267fff8050: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x0c267fff8060: 00 00 00 00 00 00 00 00 00 00 00 00 00[fa]fa fa
+  0x0c267fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c267fff8080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c267fff8090: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c267fff80a0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c267fff80b0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1436368==ABORTING
+
+Patch:
+
+diff --git a/libtiff/tif_next.c b/libtiff/tif_next.c
+index 0ba61ae..ba8b3cc 100644
+--- a/libtiff/tif_next.c
++++ b/libtiff/tif_next.c
+@@ -122,15 +122,26 @@ NeXTDecode(TIFF* tif, uint8* buf, tmsize_t occ, uint16 s)
+ 				 * bounds, potentially resulting in a security
+ 				 * issue.
+ 				 */
++#ifdef MAGMA_ENABLE_FIXES
+ 				while (n-- > 0 && npixels < imagewidth && op_offset < scanline)
++#else
++                while (n-- > 0 && npixels < imagewidth)
++#endif
++                {
+ 					SETPIXEL(op, grey);
++                }
+ 				if (npixels >= imagewidth)
+ 					break;
++#ifdef MAGMA_ENABLE_FIXES
+                 if (op_offset >= scanline ) {
+                     TIFFErrorExt(tif->tif_clientdata, module, "Invalid data for scanline %ld",
+                         (long) tif->tif_row);
+                     return (0);
+                 }
++#endif
+ 				if (cc == 0)
+ 					goto bad;
+ 				n = *bp++;

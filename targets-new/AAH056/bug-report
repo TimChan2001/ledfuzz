@@ -1,0 +1,95 @@
+Vulnerability Type: use-after-free
+Crash/Trigger Point(s): in ssl3_read_bytes rec_layer_s3.c:1480
+Bug Call Trace:
+
+=================================================================
+==1438345==ERROR: AddressSanitizer: heap-use-after-free on address 0x62a000000204 at pc 0x000000495e30 bp 0x7ffcb16f6d30 sp 0x7ffcb16f64f8
+WRITE of size 54 at 0x62a000000204 thread T0
+    #0 0x495e2f in __asan_memcpy (/root/magma_asan/targets/openssl/out/server+0x495e2f)
+    #1 0x57f553 in ssl3_read_bytes /root/magma_asan/targets/openssl/repo/ssl/record/rec_layer_s3.c:1480:13
+    #2 0x616623 in tls_get_message_body /root/magma_asan/targets/openssl/repo/ssl/statem/statem_lib.c:1339:13
+    #3 0x5d7c01 in read_state_machine /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:629:23
+    #4 0x5d586a in state_machine /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:435:21
+    #5 0x504bd3 in SSL_do_handshake /root/magma_asan/targets/openssl/repo/ssl/ssl_lib.c:3862:19
+    #6 0x4c97b2 in FuzzerTestOneInput /root/magma_asan/targets/openssl/repo/fuzz/server.c:632:9
+    #7 0xe22fe3 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #8 0xe22270 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #9 0x7f7f80658082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #10 0x41e1ed in _start (/root/magma_asan/targets/openssl/out/server+0x41e1ed)
+
+0x62a000000204 is located 4 bytes inside of 21848-byte region [0x62a000000200,0x62a000005758)
+freed by thread T0 here:
+    #0 0x4966ad in free (/root/magma_asan/targets/openssl/out/server+0x4966ad)
+    #1 0x84f2dc in CRYPTO_free /root/magma_asan/targets/openssl/repo/crypto/mem.c:252:5
+    #2 0x84f689 in CRYPTO_clear_free /root/magma_asan/targets/openssl/repo/crypto/mem.c:261:5
+    #3 0x84f522 in CRYPTO_clear_realloc /root/magma_asan/targets/openssl/repo/crypto/mem.c:239:9
+    #4 0x6df886 in BUF_MEM_grow_clean /root/magma_asan/targets/openssl/repo/crypto/buffer/buffer.c:135:15
+    #5 0x5da322 in grow_init_buf /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:502:10
+    #6 0x5d7b00 in read_state_machine /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:616:25
+    #7 0x5d586a in state_machine /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:435:21
+    #8 0x504bd3 in SSL_do_handshake /root/magma_asan/targets/openssl/repo/ssl/ssl_lib.c:3862:19
+    #9 0x4c97b2 in FuzzerTestOneInput /root/magma_asan/targets/openssl/repo/fuzz/server.c:632:9
+    #10 0xe22fe3 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #11 0xe22270 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #12 0x7f7f80658082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+
+previously allocated by thread T0 here:
+    #0 0x49692d in malloc (/root/magma_asan/targets/openssl/out/server+0x49692d)
+    #1 0x84eed0 in CRYPTO_malloc /root/magma_asan/targets/openssl/repo/crypto/mem.c:184:12
+    #2 0x84f1bb in CRYPTO_realloc /root/magma_asan/targets/openssl/repo/crypto/mem.c:207:16
+    #3 0x6df14e in BUF_MEM_grow /root/magma_asan/targets/openssl/repo/crypto/buffer/buffer.c:97:15
+    #4 0x5d5d1a in state_machine /root/magma_asan/targets/openssl/repo/ssl/statem/statem.c:384:18
+    #5 0x504bd3 in SSL_do_handshake /root/magma_asan/targets/openssl/repo/ssl/ssl_lib.c:3862:19
+    #6 0x4c97b2 in FuzzerTestOneInput /root/magma_asan/targets/openssl/repo/fuzz/server.c:632:9
+    #7 0xe22fe3 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #8 0xe22270 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #9 0x7f7f80658082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+
+SUMMARY: AddressSanitizer: heap-use-after-free (/root/magma_asan/targets/openssl/out/server+0x495e2f) in __asan_memcpy
+Shadow bytes around the buggy address:
+  0x0c547fff7ff0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c547fff8000: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c547fff8010: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c547fff8020: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c547fff8030: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+=>0x0c547fff8040:[fd]fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c547fff8050: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c547fff8060: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c547fff8070: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c547fff8080: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c547fff8090: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1438345==ABORTING
+
+Patch:
+
+--- a/ssl/statem/statem.c
++++ b/ssl/statem/statem.c
+@@ -505,7 +505,12 @@ static int grow_init_buf(SSL *s, size_t size) {
+     if (size < msg_offset)
+         return 0;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+     s->init_msg = s->init_buf->data + msg_offset;
++#endif
+     return 1;
+ }

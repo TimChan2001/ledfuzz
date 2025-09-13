@@ -1,0 +1,244 @@
+in rec_layer_s3.c:
+1257 /*-
+1258  * Return up to 'len' payload bytes received in 'type' records.
+1259  * 'type' is one of the following:
+1260  *
+1261  *   -  SSL3_RT_HANDSHAKE (when ssl3_get_message calls us)
+1262  *   -  SSL3_RT_APPLICATION_DATA (when ssl3_read calls us)
+1263  *   -  0 (during a shutdown, no data has to be returned)
+1264  *
+1265  * If we don't have stored data to work from, read a SSL/TLS record first
+1266  * (possibly multiple records if we still don't have anything to return).
+1267  *
+1268  * This function must handle any surprises the peer may have for us, such as
+1269  * Alert records (e.g. close_notify) or renegotiation requests. ChangeCipherSpec
+1270  * messages are treated as if they were handshake messages *if* the |recd_type|
+1271  * argument is non NULL.
+1272  * Also if record payloads contain fragments too small to process, we store
+1273  * them until there is enough for the respective protocol (the record protocol
+1274  * may use arbitrary fragmentation and even interleaving):
+1275  *     Change cipher spec protocol
+1276  *             just 1 byte needed, no need for keeping anything stored
+1277  *     Alert protocol
+1278  *             2 bytes needed (AlertLevel, AlertDescription)
+1279  *     Handshake protocol
+1280  *             4 bytes needed (HandshakeType, uint24 length) -- we just have
+1281  *             to detect unexpected Client Hello and Hello Request messages
+1282  *             here, anything else is handled by higher layers
+1283  *     Application data protocol
+1284  *             none of our business
+1285  */
+1286 int ssl3_read_bytes(SSL *s, int type, int *recvd_type, unsigned char *buf,
+1287                     size_t len, int peek, size_t *readbytes)
+1288 {
+1289     int i, j, ret;
+1290     size_t n, curr_rec, num_recs, totalbytes;
+1291     SSL3_RECORD *rr;
+1292     SSL3_BUFFER *rbuf;
+1293     void (*cb) (const SSL *ssl, int type2, int val) = NULL;
+1294     int is_tls13 = SSL_IS_TLS13(s);
+1295 
+1296     rbuf = &s->rlayer.rbuf;
+1297 
+1298     if (!SSL3_BUFFER_is_initialised(rbuf)) {
+1299         /* Not initialized yet */
+1300         if (!ssl3_setup_read_buffer(s)) {
+1301             /* SSLfatal() already called */
+1302             return -1;
+1303         }
+1304     }
+1305 
+1306     if ((type && (type != SSL3_RT_APPLICATION_DATA)
+1307          && (type != SSL3_RT_HANDSHAKE)) || (peek
+1308                                              && (type !=
+1309                                                  SSL3_RT_APPLICATION_DATA))) {
+1310         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL3_READ_BYTES,
+1311                  ERR_R_INTERNAL_ERROR);
+1312         return -1;
+1313     }
+1314 
+1315     if ((type == SSL3_RT_HANDSHAKE) && (s->rlayer.handshake_fragment_len > 0))
+1316         /* (partially) satisfy request from storage */
+1317     {
+1318         unsigned char *src = s->rlayer.handshake_fragment;
+1319         unsigned char *dst = buf;
+1320         unsigned int k;
+1321 
+1322         /* peek == 0 */
+1323         n = 0;
+1324         while ((len > 0) && (s->rlayer.handshake_fragment_len > 0)) {
+1325             *dst++ = *src++;
+1326             len--;
+1327             s->rlayer.handshake_fragment_len--;
+1328             n++;
+1329         }
+1330         /* move any remaining fragment bytes: */
+1331         for (k = 0; k < s->rlayer.handshake_fragment_len; k++)
+1332             s->rlayer.handshake_fragment[k] = *src++;
+1333 
+1334         if (recvd_type != NULL)
+1335             *recvd_type = SSL3_RT_HANDSHAKE;
+1336 
+1337         *readbytes = n;
+1338         return 1;
+1339     }
+1340 
+1341     /*
+1342      * Now s->rlayer.handshake_fragment_len == 0 if type == SSL3_RT_HANDSHAKE.
+1343      */
+1344 
+1345     if (!ossl_statem_get_in_handshake(s) && SSL_in_init(s)) {
+1346         /* type == SSL3_RT_APPLICATION_DATA */
+1347         i = s->handshake_func(s);
+1348         /* SSLfatal() already called */
+1349         if (i < 0)
+1350             return i;
+1351         if (i == 0)
+1352             return -1;
+1353     }
+1354  start:
+1355     s->rwstate = SSL_NOTHING;
+1356 
+1357     /*-
+1358      * For each record 'i' up to |num_recs]
+1359      * rr[i].type     - is the type of record
+1360      * rr[i].data,    - data
+1361      * rr[i].off,     - offset into 'data' for next read
+1362      * rr[i].length,  - number of bytes.
+1363      */
+1364     rr = s->rlayer.rrec;
+1365     num_recs = RECORD_LAYER_get_numrpipes(&s->rlayer);
+1366 
+1367     do {
+1368         /* get new records if necessary */
+1369         if (num_recs == 0) {
+1370             ret = ssl3_get_record(s);
+1371             if (ret <= 0) {
+1372                 /* SSLfatal() already called if appropriate */
+1373                 return ret;
+1374             }
+1375             num_recs = RECORD_LAYER_get_numrpipes(&s->rlayer);
+1376             if (num_recs == 0) {
+1377                 /* Shouldn't happen */
+1378                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL3_READ_BYTES,
+1379                          ERR_R_INTERNAL_ERROR);
+1380                 return -1;
+1381             }
+1382         }
+1383         /* Skip over any records we have already read */
+1384         for (curr_rec = 0;
+1385              curr_rec < num_recs && SSL3_RECORD_is_read(&rr[curr_rec]);
+1386              curr_rec++) ;
+1387         if (curr_rec == num_recs) {
+1388             RECORD_LAYER_set_numrpipes(&s->rlayer, 0);
+1389             num_recs = 0;
+1390             curr_rec = 0;
+1391         }
+1392     } while (num_recs == 0);
+1393     rr = &rr[curr_rec];
+1394 
+1395     if (s->rlayer.handshake_fragment_len > 0
+1396             && SSL3_RECORD_get_type(rr) != SSL3_RT_HANDSHAKE
+1397             && SSL_IS_TLS13(s)) {
+1398         SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_F_SSL3_READ_BYTES,
+1399                  SSL_R_MIXED_HANDSHAKE_AND_NON_HANDSHAKE_DATA);
+1400         return -1;
+1401     }
+1402 
+1403     /*
+1404      * Reset the count of consecutive warning alerts if we've got a non-empty
+1405      * record that isn't an alert.
+1406      */
+1407     if (SSL3_RECORD_get_type(rr) != SSL3_RT_ALERT
+1408             && SSL3_RECORD_get_length(rr) != 0)
+1409         s->rlayer.alert_count = 0;
+1410 
+1411     /* we now have a packet which can be read and processed */
+1412 
+1413     if (s->s3.change_cipher_spec /* set when we receive ChangeCipherSpec,
+1414                                   * reset by ssl3_get_finished */
+1415         && (SSL3_RECORD_get_type(rr) != SSL3_RT_HANDSHAKE)) {
+1416         SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_F_SSL3_READ_BYTES,
+1417                  SSL_R_DATA_BETWEEN_CCS_AND_FINISHED);
+1418         return -1;
+1419     }
+1420 
+1421     /*
+1422      * If the other end has shut down, throw anything we read away (even in
+1423      * 'peek' mode)
+1424      */
+1425     if (s->shutdown & SSL_RECEIVED_SHUTDOWN) {
+1426         SSL3_RECORD_set_length(rr, 0);
+1427         s->rwstate = SSL_NOTHING;
+1428         return 0;
+1429     }
+1430 
+1431     if (type == SSL3_RECORD_get_type(rr)
+1432         || (SSL3_RECORD_get_type(rr) == SSL3_RT_CHANGE_CIPHER_SPEC
+1433             && type == SSL3_RT_HANDSHAKE && recvd_type != NULL
+1434             && !is_tls13)) {
+1435         /*
+1436          * SSL3_RT_APPLICATION_DATA or
+1437          * SSL3_RT_HANDSHAKE or
+1438          * SSL3_RT_CHANGE_CIPHER_SPEC
+1439          */
+1440         /*
+1441          * make sure that we are not getting application data when we are
+1442          * doing a handshake for the first time
+1443          */
+1444         if (SSL_in_init(s) && (type == SSL3_RT_APPLICATION_DATA) &&
+1445             (s->enc_read_ctx == NULL)) {
+1446             SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_F_SSL3_READ_BYTES,
+1447                      SSL_R_APP_DATA_IN_HANDSHAKE);
+1448             return -1;
+1449         }
+1450 
+1451         if (type == SSL3_RT_HANDSHAKE
+1452             && SSL3_RECORD_get_type(rr) == SSL3_RT_CHANGE_CIPHER_SPEC
+1453             && s->rlayer.handshake_fragment_len > 0) {
+1454             SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_F_SSL3_READ_BYTES,
+1455                      SSL_R_CCS_RECEIVED_EARLY);
+1456             return -1;
+1457         }
+1458
+1459         if (recvd_type != NULL)
+1460             *recvd_type = SSL3_RECORD_get_type(rr);
+1461 
+1462         if (len == 0) {
+1463             /*
+1464              * Mark a zero length record as read. This ensures multiple calls to
+1465              * SSL_read() with a zero length buffer will eventually cause
+1466              * SSL_pending() to report data as being available.
+1467              */
+1468             if (SSL3_RECORD_get_length(rr) == 0)
+1469                 SSL3_RECORD_set_read(rr);
+1470             return 0;
+1471         }
+1472 
+1473         totalbytes = 0;
+1474         do {
+1475             if (len - totalbytes > SSL3_RECORD_get_length(rr))
+1476                 n = SSL3_RECORD_get_length(rr);
+1477             else
+1478                 n = len - totalbytes;
+1479 
+1480             memcpy(buf, &(rr->data[rr->off]), n);
+1481             buf += n;
+
+in statem.c:
+
+498 static int grow_init_buf(SSL *s, size_t size) {
+499 
+500     size_t msg_offset = (char *)s->init_msg - s->init_buf->data;
+501 
+502     if (!BUF_MEM_grow_clean(s->init_buf, (int)size))
+503         return 0;
+504 
+505     if (size < msg_offset)
+506         return 0;
+507 
+508 #ifdef MAGMA_ENABLE_FIXES
+509     s->init_msg = s->init_buf->data + msg_offset;
+510 #endif
+511     return 1;
+512 }

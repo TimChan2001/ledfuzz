@@ -1,0 +1,125 @@
+Vulnerability Type: stack-buffer-overflow 
+Crash/Trigger Point(s): in GfxImageColorMap::getGray GfxState.c:5591
+Bug Call Trace:
+
+=================================================================
+==1436700==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7ffc904d5051 at pc 0x000000520217 bp 0x7ffc904d4e50 sp 0x7ffc904d4e48
+READ of size 1 at 0x7ffc904d5051 thread T0
+    #0 0x520216 in GfxImageColorMap::getGray(unsigned char const*, int*) /root/magma_asan/targets/poppler/repo/poppler/GfxState.cc:5591:37
+    #1 0x4d64ec in ImageOutputDev::writeImageFile(ImgWriter*, ImageOutputDev::ImageFormat, char const*, Stream*, int, int, GfxImageColorMap*) /root/magma_asan/targets/poppler/repo/utils/ImageOutputDev.cc:401:19
+    #2 0x4d8aaf in ImageOutputDev::writeImage(GfxState*, Object*, Stream*, int, int, GfxImageColorMap*, bool) /root/magma_asan/targets/poppler/repo/utils/ImageOutputDev.cc:658:9
+    #3 0x4d9c87 in ImageOutputDev::drawImage(GfxState*, Object*, Stream*, int, int, GfxImageColorMap*, bool, int const*, bool) /root/magma_asan/targets/poppler/repo/utils/ImageOutputDev.cc:687:9
+    #4 0x717bba in Gfx::doImage(Object*, Stream*, bool) /root/magma_asan/targets/poppler/repo/poppler/Gfx.cc:4519:22
+    #5 0x6ded02 in Gfx::opXObject(Object*, int) /root/magma_asan/targets/poppler/repo/poppler/Gfx.cc:4097:13
+    #6 0x6f5f92 in Gfx::execOp(Object*, Object*, int) /root/magma_asan/targets/poppler/repo/poppler/Gfx.cc:802:5
+    #7 0x6f502f in Gfx::go(bool) /root/magma_asan/targets/poppler/repo/poppler/Gfx.cc:679:13
+    #8 0x6f453c in Gfx::display(Object*, bool) /root/magma_asan/targets/poppler/repo/poppler/Gfx.cc:640:5
+    #9 0x7bd762 in Page::displaySlice(OutputDev*, double, double, int, bool, bool, int, int, int, int, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /root/magma_asan/targets/poppler/repo/poppler/Page.cc:576:14
+    #10 0x7bd343 in Page::display(OutputDev*, double, double, int, bool, bool, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /root/magma_asan/targets/poppler/repo/poppler/Page.cc:521:5
+    #11 0x563865 in PDFDoc::displayPage(OutputDev*, int, double, double, int, bool, bool, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*, bool) /root/magma_asan/targets/poppler/repo/poppler/PDFDoc.cc:638:24
+    #12 0x564067 in PDFDoc::displayPages(OutputDev*, int, int, double, double, int, bool, bool, bool, bool (*)(void*), void*, bool (*)(Annot*, void*), void*) /root/magma_asan/targets/poppler/repo/poppler/PDFDoc.cc:647:9
+    #13 0x4d2920 in main /root/magma_asan/targets/poppler/repo/utils/pdfimages.cc:204:14
+    #14 0x7f0207712082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #15 0x42252d in _start (/root/magma_asan/targets/poppler/out/pdfimages+0x42252d)
+
+Address 0x7ffc904d5051 is located in stack of thread T0 at offset 145 in frame
+    #0 0x4d608f in ImageOutputDev::writeImageFile(ImgWriter*, ImageOutputDev::ImageFormat, char const*, Stream*, int, int, GfxImageColorMap*) /root/magma_asan/targets/poppler/repo/utils/ImageOutputDev.cc:349
+
+  This frame has 5 object(s):
+    [32, 40) 'row' (line 352)
+    [64, 76) 'rgb' (line 355)
+    [96, 112) 'cmyk' (line 356)
+    [128, 132) 'gray' (line 357)
+    [144, 145) 'zero' (line 361) <== Memory access at offset 145 overflows this variable
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+SUMMARY: AddressSanitizer: stack-buffer-overflow /root/magma_asan/targets/poppler/repo/poppler/GfxState.cc:5591:37 in GfxImageColorMap::getGray(unsigned char const*, int*)
+Shadow bytes around the buggy address:
+  0x1000120929b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x1000120929c0: 00 00 00 00 00 00 00 00 00 00 00 00 f1 f1 f1 f1
+  0x1000120929d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x1000120929e0: f3 f3 f3 f3 00 00 00 00 00 00 00 00 00 00 00 00
+  0x1000120929f0: 00 00 00 00 00 00 00 00 f1 f1 f1 f1 00 f2 f2 f2
+=>0x100012092a00: 00 04 f2 f2 00 00 f2 f2 04 f2[01]f3 00 00 00 00
+  0x100012092a10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x100012092a20: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x100012092a30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x100012092a40: 00 00 00 00 00 00 00 00 00 00 00 00 f1 f1 f1 f1
+  0x100012092a50: 04 f2 04 f2 04 f2 00 f2 f2 f2 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1436700==ABORTING
+
+
+Patch:
+
+diff --git a/utils/HtmlOutputDev.cc b/utils/HtmlOutputDev.cc
+index 954a477..1720084 100644
+--- a/utils/HtmlOutputDev.cc
++++ b/utils/HtmlOutputDev.cc
+@@ -1434,8 +1434,15 @@ void HtmlOutputDev::drawPngImage(GfxState *state, Stream *str, int width, int he
+         int invert_bits = 0xff;
+         if (colorMap) {
+             GfxGray gray;
++#ifdef MAGMA_ENABLE_FIXES
+             unsigned char zero[gfxColorMaxComps];
++#else
++            unsigned char zero[1];
++#endif
+             memset(zero, 0, sizeof(zero));
+             colorMap->getGray(zero, &gray);
+             if (colToByte(gray) == 0)
+                 invert_bits = 0x00;
+diff --git a/utils/ImageOutputDev.cc b/utils/ImageOutputDev.cc
+index 850eb10..7a89884 100644
+--- a/utils/ImageOutputDev.cc
++++ b/utils/ImageOutputDev.cc
+@@ -358,7 +358,11 @@ void ImageOutputDev::writeImageFile(ImgWriter *writer, ImageFormat format, const
+     GfxRGB rgb;
+     GfxCMYK cmyk;
+     GfxGray gray;
++#ifdef MAGMA_ENABLE_FIXES
+     unsigned char zero[gfxColorMaxComps];
++#else
++    unsigned char zero[1];
++#endif
+     int invert_bits;
+ 
+     if (writer) {
+@@ -398,6 +402,9 @@ void ImageOutputDev::writeImageFile(ImgWriter *writer, ImageFormat format, const
+     invert_bits = 0xff;
+     if (colorMap) {
+         memset(zero, 0, sizeof(zero));
+         colorMap->getGray(zero, &gray);
+         if (colToByte(gray) == 0)
+             invert_bits = 0x00;
+diff --git a/poppler/GfxState.h b/poppler/GfxState.h
+index 7a6e4031..caa5c164 100644
+--- a/poppler/GfxState.h
++++ b/poppler/GfxState.h
+@@ -1192,6 +1192,7 @@ public:
+ 
+     // Get the color space.
+     GfxColorSpace *getColorSpace() { return colorSpace; }
++    GfxColorSpace *getColorSpace2() { return colorSpace2; }
+ 
+     // Get stream decoding info.
+     int getNumPixelComps() const { return nComps; }

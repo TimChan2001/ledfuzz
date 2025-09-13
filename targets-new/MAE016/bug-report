@@ -1,0 +1,95 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in php_strnlen exif.c:223
+Bug Call Trace:
+
+=================================================================
+==1439385==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60c00009b738 at pc 0x00000091b903 bp 0x7ffed131aac0 sp 0x7ffed131aab8
+READ of size 1 at 0x60c00009b738 thread T0
+    #0 0x91b902 in php_strnlen /root/magma_asan/targets/php/repo/ext/exif/exif.c:223:23
+    #1 0x9249da in exif_iif_add_value /root/magma_asan/targets/php/repo/ext/exif/exif.c:2246:21
+    #2 0x90db24 in exif_iif_add_tag /root/magma_asan/targets/php/repo/ext/exif/exif.c:2334:2
+    #3 0x91a6a2 in exif_process_IFD_TAG_impl /root/magma_asan/targets/php/repo/ext/exif/exif.c:3574:2
+    #4 0x9179d4 in exif_process_IFD_TAG /root/magma_asan/targets/php/repo/ext/exif/exif.c:3593:11
+    #5 0x9226f9 in exif_process_IFD_in_TIFF_impl /root/magma_asan/targets/php/repo/ext/exif/exif.c:4221:12
+    #6 0x91549e in exif_process_IFD_in_TIFF /root/magma_asan/targets/php/repo/ext/exif/exif.c:4280:11
+    #7 0x913c52 in exif_scan_FILE_header /root/magma_asan/targets/php/repo/ext/exif/exif.c:4317:9
+    #8 0x912e00 in exif_read_from_impl /root/magma_asan/targets/php/repo/ext/exif/exif.c:4442:8
+    #9 0x90b3c9 in exif_read_from_stream /root/magma_asan/targets/php/repo/ext/exif/exif.c:4458:8
+    #10 0x908d15 in zif_exif_read_data /root/magma_asan/targets/php/repo/ext/exif/exif.c:4547:9
+    #11 0x139a9a1 in zend_call_function /root/magma_asan/targets/php/repo/Zend/zend_execute_API.c:911:4
+    #12 0x1396e6f in _call_user_function_impl /root/magma_asan/targets/php/repo/Zend/zend_execute_API.c:659:9
+    #13 0x192b4d4 in fuzzer_call_php_func_zval /root/magma_asan/targets/php/repo/sapi/fuzzer/fuzzer-sapi.c:278:2
+    #14 0x192a0b3 in LLVMFuzzerTestOneInput /root/magma_asan/targets/php/repo/sapi/fuzzer/fuzzer-exif.c:52:2
+    #15 0x1928153 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #16 0x19273e0 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #17 0x7ff1431de082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #18 0x60293d in _start (/root/magma_asan/targets/php/out/MAE016/exif+0x60293d)
+
+0x60c00009b738 is located 8 bytes to the left of 114-byte region [0x60c00009b740,0x60c00009b7b2)
+allocated by thread T0 here:
+    #0 0x67b399 in realloc (/root/magma_asan/targets/php/out/MAE016/exif+0x67b399)
+    #1 0x12fbad6 in __zend_realloc /root/magma_asan/targets/php/repo/Zend/zend_alloc.c:3049:6
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /root/magma_asan/targets/php/repo/ext/exif/exif.c:223:23 in php_strnlen
+Shadow bytes around the buggy address:
+  0x0c188000b690: 00 00 00 00 00 00 00 fa fa fa fa fa fa fa fa fa
+  0x0c188000b6a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 fa
+  0x0c188000b6b0: fa fa fa fa fa fa fa fa 00 00 00 00 00 00 00 00
+  0x0c188000b6c0: 00 00 00 00 00 00 00 fa fa fa fa fa fa fa fa fa
+  0x0c188000b6d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 fa
+=>0x0c188000b6e0: fa fa fa fa fa fa fa[fa]00 00 00 00 00 00 00 00
+  0x0c188000b6f0: 00 00 00 00 00 00 02 fa fa fa fa fa fa fa fa fa
+  0x0c188000b700: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x0c188000b710: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c188000b720: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c188000b730: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1439385==ABORTING
+
+
+Patch:
+
+diff --git a/ext/exif/exif.c b/ext/exif/exif.c
+index 57ca8fdaa6..8d07216877 100644
+--- a/ext/exif/exif.c
++++ b/ext/exif/exif.c
+@@ -2062,6 +2062,7 @@ static inline void exif_offset_info_init(
+ /* Try to get a pointer at offset_base+offset with length dereferenceable bytes. */
+ static inline char *exif_offset_info_try_get(
+ 		const exif_offset_info *info, size_t offset, size_t length) {
++#ifdef MAGMA_ENABLE_FIXES
+ 	char *start, *end;
+ 	if (ptr_offset_overflows(info->offset_base, offset)) {
+ 		return NULL;
+@@ -2078,6 +2079,20 @@ static inline char *exif_offset_info_try_get(
+ 	}
+ 
+ 	return start;
++#else
++	if ((offset + length) > (info->valid_end - info->valid_start)) {
++		return NULL;
++	}
++	return info->offset_base + offset;
++#endif
+ }
+ 
+ static inline zend_bool exif_offset_info_contains(

@@ -1,0 +1,148 @@
+in tif_pixarlog.c
+
+751 static int
+752 PixarLogDecode(TIFF* tif, uint8* op, tmsize_t occ, uint16 s)
+753 {
+754     static const char module[] = "PixarLogDecode";
+755     TIFFDirectory *td = &tif->tif_dir;
+756     PixarLogState* sp = DecoderState(tif);
+757     tmsize_t i;
+758     tmsize_t nsamples;
+759     int llen;
+760     uint16 *up;
+761 
+762     switch (sp->user_datafmt) {
+763     case PIXARLOGDATAFMT_FLOAT:
+764             nsamples = occ / sizeof(float); /* XXX float == 32 bits */
+765             break;
+766     case PIXARLOGDATAFMT_16BIT:
+767     case PIXARLOGDATAFMT_12BITPICIO:
+768     case PIXARLOGDATAFMT_11BITLOG:
+769             nsamples = occ / sizeof(uint16); /* XXX uint16 == 16 bits */
+770             break;
+771     case PIXARLOGDATAFMT_8BIT:
+772     case PIXARLOGDATAFMT_8BITABGR:
+773             nsamples = occ;
+774             break;
+775     default:
+776             TIFFErrorExt(tif->tif_clientdata, module,
+777                     "%d bit input not supported in PixarLog",
+778                     td->td_bitspersample);
+779             return 0;
+780     }
+781 
+782     llen = sp->stride * td->td_imagewidth;
+783 
+784     (void) s;
+785     assert(sp != NULL);
+786 
+787         sp->stream.next_in = tif->tif_rawcp;
+788     sp->stream.avail_in = (uInt) tif->tif_rawcc;
+789 
+790     sp->stream.next_out = (unsigned char *) sp->tbuf;
+791     assert(sizeof(sp->stream.avail_out)==4);  /* if this assert gets raised,
+792         we need to simplify this code to reflect a ZLib that is likely updated
+793         to deal with 8byte memory sizes, though this code will respond
+794         appropriately even before we simplify it */
+795     sp->stream.avail_out = (uInt) (nsamples * sizeof(uint16));
+796     if (sp->stream.avail_out != nsamples * sizeof(uint16))
+797     {
+798             TIFFErrorExt(tif->tif_clientdata, module, "ZLib cannot deal with buffers this size");
+799             return (0);
+800     }
+801 #ifdef MAGMA_ENABLE_FIXES
+802     /* Check that we will not fill more than what was allocated */
+803     if ((tmsize_t)sp->stream.avail_out > sp->tbuf_size)
+804     {
+805             TIFFErrorExt(tif->tif_clientdata, module, "sp->stream.avail_out > sp->tbuf_size");
+806             return (0);
+807     }
+808 #endif
+809     do {
+810             int state = inflate(&sp->stream, Z_PARTIAL_FLUSH);
+811             if (state == Z_STREAM_END) {
+812                     break;                  /* XXX */
+813             }
+814             if (state == Z_DATA_ERROR) {
+815                     TIFFErrorExt(tif->tif_clientdata, module,
+816                         "Decoding error at scanline %lu, %s",
+817                         (unsigned long) tif->tif_row, sp->stream.msg ? sp->stream.msg : "(null)");
+818                     return (0);
+819             }
+820             if (state != Z_OK) {
+821                     TIFFErrorExt(tif->tif_clientdata, module, "ZLib error: %s",
+822                         sp->stream.msg ? sp->stream.msg : "(null)");
+823                     return (0);
+824             }
+825     } while (sp->stream.avail_out > 0);
+826 
+827     /* hopefully, we got all the bytes we needed */
+828     if (sp->stream.avail_out != 0) {
+829             TIFFErrorExt(tif->tif_clientdata, module,
+830                 "Not enough data at scanline %lu (short " TIFF_UINT64_FORMAT " bytes)",
+831                 (unsigned long) tif->tif_row, (TIFF_UINT64_T) sp->stream.avail_out);
+832             return (0);
+833     }
+834 
+835         tif->tif_rawcp = sp->stream.next_in;
+836         tif->tif_rawcc = sp->stream.avail_in;
+837 
+838     up = sp->tbuf;
+839     /* Swap bytes in the data if from a different endian machine. */
+840     if (tif->tif_flags & TIFF_SWAB)
+841             TIFFSwabArrayOfShort(up, nsamples);
+842 
+843     /*
+844      * if llen is not an exact multiple of nsamples, the decode operation
+845      * may overflow the output buffer, so truncate it enough to prevent
+846      * that but still salvage as much data as possible.
+847      */
+848     if (nsamples % llen) { 
+849             TIFFWarningExt(tif->tif_clientdata, module,
+850                     "stride %lu is not a multiple of sample count, "
+851                     "%lu, data truncated.", (unsigned long) llen, (unsigned long) nsamples);
+852             nsamples -= nsamples % llen;
+853     }
+854 
+855     for (i = 0; i < nsamples; i += llen, up += llen) {
+856             switch (sp->user_datafmt)  {
+857             case PIXARLOGDATAFMT_FLOAT:
+858                     horizontalAccumulateF(up, llen, sp->stride,
+859                                     (float *)op, sp->ToLinearF);
+860                     op += llen * sizeof(float);
+861                     break;
+862             case PIXARLOGDATAFMT_16BIT:
+863                     horizontalAccumulate16(up, llen, sp->stride,
+864                                     (uint16 *)op, sp->ToLinear16);
+865                     op += llen * sizeof(uint16);
+866                     break;
+867             case PIXARLOGDATAFMT_12BITPICIO:
+868                     horizontalAccumulate12(up, llen, sp->stride,
+869                                     (int16 *)op, sp->ToLinearF);
+870                     op += llen * sizeof(int16);
+871                     break;
+872             case PIXARLOGDATAFMT_11BITLOG:
+873                     horizontalAccumulate11(up, llen, sp->stride,
+874                                     (uint16 *)op);
+875                     op += llen * sizeof(uint16);
+876                     break;
+877             case PIXARLOGDATAFMT_8BIT:
+878                     horizontalAccumulate8(up, llen, sp->stride,
+879                                     (unsigned char *)op, sp->ToLinear8);
+880                     op += llen * sizeof(unsigned char);
+881                     break;
+882             case PIXARLOGDATAFMT_8BITABGR:
+883                     horizontalAccumulate8abgr(up, llen, sp->stride,
+884                                     (unsigned char *)op, sp->ToLinear8);
+885                     op += llen * sizeof(unsigned char);
+886                     break;
+887             default:
+888                     TIFFErrorExt(tif->tif_clientdata, module,
+889                               "Unsupported bits/sample: %d",
+890                               td->td_bitspersample);
+891                     return (0);
+892             }
+893     }
+894 
+895     return (1);
+896 }

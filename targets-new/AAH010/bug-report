@@ -1,0 +1,83 @@
+Vulnerability Type: heap-buffer-overflow
+Crash/Trigger Point(s): in PixarLogDecode tif_pixarlog.c:810
+Bug Call Trace:
+
+=================================================================
+==1435674==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x607000000142 at pc 0x0000004359f7 bp 0x7ffd97dec890 sp 0x7ffd97dec050
+READ of size 192 at 0x607000000142 thread T0
+    #0 0x4359f6 in memcpy (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x4359f6)
+    #1 0x7fefdd3fb6b2 in inflate (/lib/x86_64-linux-gnu/libz.so.1+0xa6b2)
+    #2 0x5f7795 in PixarLogDecode /root/magma_asan/targets/libtiff/repo/libtiff/tif_pixarlog.c:810:15
+    #3 0x556e39 in _TIFFReadEncodedTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1092:9
+    #4 0x556921 in _TIFFReadTileAndAllocBuffer /root/magma_asan/targets/libtiff/repo/libtiff/tif_read.c:1042:13
+    #5 0x52bb05 in gtTileContig /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:673:10
+    #6 0x529bf1 in TIFFRGBAImageGet /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:511:12
+    #7 0x529f3b in TIFFReadRGBAImageOriented /root/magma_asan/targets/libtiff/repo/libtiff/tif_getimage.c:530:8
+    #8 0x4c9ddf in LLVMFuzzerTestOneInput /root/magma_asan/targets/libtiff/repo/contrib/oss-fuzz/tiff_read_rgba_fuzzer.cc:94:7
+    #9 0x4cbd63 in ExecuteFilesOnyByOne(int, char**) /root/magma/fuzzers/afl/src/afl_driver.cpp:167:5
+    #10 0x4caff0 in main /root/magma/fuzzers/afl/src/afl_driver.cpp:183:12
+    #11 0x7fefdce0c082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #12 0x41ec9d in _start (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x41ec9d)
+
+0x607000000142 is located 0 bytes to the right of 66-byte region [0x607000000100,0x607000000142)
+allocated by thread T0 here:
+    #0 0x4973dd in malloc (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x4973dd)
+    #1 0x567574 in _TIFFmalloc /root/magma_asan/targets/libtiff/repo/libtiff/tif_unix.c:314:10
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow (/root/magma_asan/targets/libtiff/out/tiff_read_rgba_fuzzer+0x4359f6) in memcpy
+Shadow bytes around the buggy address:
+  0x0c0e7fff7fd0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c0e7fff7fe0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c0e7fff7ff0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x0c0e7fff8000: fa fa fa fa 00 00 00 00 00 00 00 00 00 fa fa fa
+  0x0c0e7fff8010: fa fa 00 00 00 00 00 00 00 00 00 fa fa fa fa fa
+=>0x0c0e7fff8020: 00 00 00 00 00 00 00 00[02]fa fa fa fa fa fa fa
+  0x0c0e7fff8030: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8040: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8050: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8060: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c0e7fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==1435674==ABORTING
+
+
+Patch:
+
+diff --git a/libtiff/tif_pixarlog.c b/libtiff/tif_pixarlog.c
+index b1e48d9..5901551 100644
+--- a/libtiff/tif_pixarlog.c
++++ b/libtiff/tif_pixarlog.c
+@@ -804,12 +804,17 @@ PixarLogDecode(TIFF* tif, uint8* op, tmsize_t occ, uint16 s)
+ 		TIFFErrorExt(tif->tif_clientdata, module, "ZLib cannot deal with buffers this size");
+ 		return (0);
+ 	}
++#ifdef MAGMA_ENABLE_FIXES
+ 	/* Check that we will not fill more than what was allocated */
+ 	if ((tmsize_t)sp->stream.avail_out > sp->tbuf_size)
+ 	{
+ 		TIFFErrorExt(tif->tif_clientdata, module, "sp->stream.avail_out > sp->tbuf_size");
+ 		return (0);
+ 	}
++#endif
+ 	do {
+ 		int state = inflate(&sp->stream, Z_PARTIAL_FLUSH);
+ 		if (state == Z_STREAM_END) {
