@@ -4958,7 +4958,7 @@ static u32 calculate_score(struct queue_entry* q) {
 
   if (q->trig_distance == -DBL_MAX) {
     if (reach_tag == 1)
-      power_factor *= T; // reduce power for unreachable inputs
+      // power_factor *= T; // reduce power for unreachable inputs
   }
   else {
     double normalized_t_d = 0; // when "max_distance == min_distance", we set the normalized_d to 0 so that we can sufficiently explore those testcases whose distance >= 0.
@@ -4969,7 +4969,7 @@ static u32 calculate_score(struct queue_entry* q) {
 
         double p = (1.0 - normalized_t_d) * (1.0 - T) + 0.5 * T;
         double power_factor_t = pow(2.0, 2.0 * (double) log2(MAX_FACTOR) * (p - 0.5));
-        power_factor += power_factor_t;
+        // power_factor += power_factor_t;
 
     }// else WARNF ("Normalized distance negative: %f", normalized_d);
   }
