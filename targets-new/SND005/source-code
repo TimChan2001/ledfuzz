@@ -1,0 +1,33 @@
+in aiff.c:
+
+1757 static int
+1758 aiff_read_chanmap (SF_PRIVATE * psf, unsigned dword)
+1759 {  const AIFF_CAF_CHANNEL_MAP * map_info ;
+1760    unsigned channel_bitmap, channel_decriptions, bytesread ;
+1761    int layout_tag ;
+1762 
+1763    bytesread = psf_binheader_readf (psf, "444", &layout_tag, &channel_bitmap, &channel_decriptions) ;
+1764 
+1765    if ((map_info = aiff_caf_of_channel_layout_tag (layout_tag)) == NULL)
+1766            return 0 ;
+1767 
+1768    psf_log_printf (psf, "  Tag    : %x\n", layout_tag) ;
+1769    if (map_info)
+1770            psf_log_printf (psf, "  Layout : %s\n", map_info->name) ;
+1771 
+1772    if (bytesread < dword)
+1773            psf_binheader_readf (psf, "j", dword - bytesread) ;
+1774 
+1775    if (map_info->channel_map != NULL)
+1776    {    size_t chanmap_size = psf->sf.channels * sizeof (psf->channel_map [0]) ;
+1777 
+1778            free (psf->channel_map) ;
+1779 
+1780            if ((psf->channel_map = malloc (chanmap_size)) == NULL)
+1781                    return SFE_MALLOC_FAILED ;
+1782 
+1783            memcpy (psf->channel_map, map_info->channel_map, chanmap_size) ;
+1784            } ;
+1785 
+1786    return 0 ;
+1787 } /* aiff_read_chanmap */

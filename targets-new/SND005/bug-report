@@ -1,0 +1,75 @@
+Vulnerability Type: In libsndfile version 1.0.28, an error in the "aiff_read_chanmap()" function (aiff.c) can be exploited to cause an out-of-bounds read memory access via a specially crafted AIFF file.
+Crash/Trigger Point(s): line 1783 in aiff.c
+Bug Call Trace:
+
+=================================================================
+==878467==ERROR: AddressSanitizer: global-buffer-overflow on address 0x0000006971d0 at pc 0x00000049798a bp 0x7fff611a2e90 sp 0x7fff611a2658
+READ of size 400 at 0x0000006971d0 thread T0
+    #0 0x497989 in __asan_memcpy (/root/magma_asan/targets/libsndfile/out/SND005/sndfile_fuzzer+0x497989)
+    #1 0x4f3e48 in memcpy /usr/include/x86_64-linux-gnu/bits/string_fortified.h:34:10
+    #2 0x4f3e48 in aiff_read_chanmap /root/magma_asan/targets/libsndfile/repo/src/aiff.c:1783:3
+    #3 0x4ea7bc in aiff_read_header /root/magma_asan/targets/libsndfile/repo/src/aiff.c:885:19
+    #4 0x4e6be7 in aiff_open /root/magma_asan/targets/libsndfile/repo/src/aiff.c:249:17
+    #5 0x4ccab4 in psf_open_file /root/magma_asan/targets/libsndfile/repo/src/sndfile.c:3157:13
+    #6 0x4cdd4c in sf_open_virtual /root/magma_asan/targets/libsndfile/repo/src/sndfile.c:517:9
+    #7 0x4ca82c in LLVMFuzzerTestOneInput /root/magma_asan/targets/libsndfile/repo/ossfuzz/sndfile_fuzzer.cc:120:13
+    #8 0x656464 in main /root/magma_asan/targets/libsndfile/repo/ossfuzz/standaloneengine.cc:50:11
+    #9 0x7f4c90c04082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #10 0x41fdfd in _start (/root/magma_asan/targets/libsndfile/out/SND005/sndfile_fuzzer+0x41fdfd)
+
+0x0000006971d0 is located 48 bytes to the left of global variable '<string literal>' defined in 'src/chanmap.c:102:41' (0x697200) of size 22
+  '<string literal>' is ascii string 'DVD 5 (L, R, LFE, Cs)'
+0x0000006971d0 is located 0 bytes to the right of global variable 'four_channel_dvd_5' defined in 'src/chanmap.c:91:18' (0x6971c0) of size 16
+SUMMARY: AddressSanitizer: global-buffer-overflow (/root/magma_asan/targets/libsndfile/out/SND005/sndfile_fuzzer+0x497989) in __asan_memcpy
+Shadow bytes around the buggy address:
+  0x0000800cade0: f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9 00 00 00 02
+  0x0000800cadf0: f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9 00 00 00 00
+  0x0000800cae00: 04 f9 f9 f9 f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9
+  0x0000800cae10: 00 00 00 01 f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9
+  0x0000800cae20: 00 00 00 01 f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9
+=>0x0000800cae30: 00 00 07 f9 f9 f9 f9 f9 00 00[f9]f9 f9 f9 f9 f9
+  0x0000800cae40: 00 00 06 f9 f9 f9 f9 f9 00 00 f9 f9 f9 f9 f9 f9
+  0x0000800cae50: 00 00 06 f9 f9 f9 f9 f9 00 00 04 f9 f9 f9 f9 f9
+  0x0000800cae60: 00 00 00 00 04 f9 f9 f9 f9 f9 f9 f9 00 00 04 f9
+  0x0000800cae70: f9 f9 f9 f9 00 00 00 05 f9 f9 f9 f9 00 00 04 f9
+  0x0000800cae80: f9 f9 f9 f9 00 00 00 05 f9 f9 f9 f9 00 00 04 f9
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+==878467==ABORTING
+
+Patch:
+
+diff --git a/src/aiff.c b/src/aiff.c
+index d872a89..1c05e2f 100644
+--- a/src/aiff.c
++++ b/src/aiff.c
+@@ -1773,7 +1773,14 @@ aiff_read_chanmap (SF_PRIVATE * psf, unsigned dword)
+ 		psf_binheader_readf (psf, "j", dword - bytesread) ;
+ 
+ 	if (map_info->channel_map != NULL)
++#ifdef MAGMA_ENABLE_FIXES
+ 	{	size_t chanmap_size = SF_MIN (psf->sf.channels, layout_tag & 0xffff) * sizeof (psf->channel_map [0]) ;
++#else
++	{    size_t chanmap_size = psf->sf.channels * sizeof (psf->channel_map [0]) ;
++#endif
+ 
+ 		free (psf->channel_map) ;
+ 

@@ -1,0 +1,36 @@
+Vulnerability Type: Integer overflow in libsndfile before 1.0.25 allows remote attackers to cause a denial of service (application crash) or possibly execute arbitrary code via a crafted PARIS Audio Format (PAF) file that triggers a heap-based buffer overflow.
+Crash/Trigger Point(s): line 224 in paf.c
+Bug Call Trace:
+
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==871938==ERROR: AddressSanitizer: FPE on unknown address 0x000000522714 (pc 0x000000522714 bp 0x7ffcdd3ce7e0 sp 0x7ffcdd3ce680 T0)
+    #0 0x522714 in paf_read_header /root/magma_asan/targets/libsndfile/repo/src/paf.c
+    #1 0x52183f in paf_open /root/magma_asan/targets/libsndfile/repo/src/paf.c:108:17
+    #2 0x4cc6ac in psf_open_file /root/magma_asan/targets/libsndfile/repo/src/sndfile.c:3178:13
+    #3 0x4cdd4c in sf_open_virtual /root/magma_asan/targets/libsndfile/repo/src/sndfile.c:517:9
+    #4 0x4ca82c in LLVMFuzzerTestOneInput /root/magma_asan/targets/libsndfile/repo/ossfuzz/sndfile_fuzzer.cc:120:13
+    #5 0x656444 in main /root/magma_asan/targets/libsndfile/repo/ossfuzz/standaloneengine.cc:50:11
+    #6 0x7f66522b2082 in __libc_start_main /build/glibc-FcRMwW/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #7 0x41fdfd in _start (/root/magma_asan/targets/libsndfile/out/SND001/sndfile_fuzzer+0x41fdfd)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: FPE /root/magma_asan/targets/libsndfile/repo/src/paf.c in paf_read_header
+==871938==ABORTING
+
+Patch:
+
+diff --git a/src/paf.c b/src/paf.c
+index 459bc46..21b3b2d 100644
+--- a/src/paf.c
++++ b/src/paf.c
+@@ -198,8 +198,13 @@ paf_read_header	(SF_PRIVATE *psf)
+ 		psf->endian = SF_ENDIAN_BIG ;
+ 		} ;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+ 	if (paf_fmt.channels < 1 || paf_fmt.channels > SF_MAX_CHANNELS)
+ 		return SFE_PAF_BAD_CHANNELS ;
++#endif
+ 
+ 	psf->datalength = psf->filelength - psf->dataoffset ;

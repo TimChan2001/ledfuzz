@@ -1,0 +1,115 @@
+in paf.c
+
+157 static int
+158 paf_read_header     (SF_PRIVATE *psf)
+159 {   PAF_FMT         paf_fmt ;
+160     int                     marker ;
+161 
+162     if (psf->filelength < PAF_HEADER_LENGTH)
+163             return SFE_PAF_SHORT_HEADER ;
+164 
+165     memset (&paf_fmt, 0, sizeof (paf_fmt)) ;
+166     psf_binheader_readf (psf, "pm", 0, &marker) ;
+167 
+168     psf_log_printf (psf, "Signature   : '%M'\n", marker) ;
+169 
+170     if (marker == PAF_MARKER)
+171     {       psf_binheader_readf (psf, "E444444", &(paf_fmt.version), &(paf_fmt.endianness),
+172                     &(paf_fmt.samplerate), &(paf_fmt.format), &(paf_fmt.channels), &(paf_fmt.source)) ;
+173             }
+174     else if (marker == FAP_MARKER)
+175     {       psf_binheader_readf (psf, "e444444", &(paf_fmt.version), &(paf_fmt.endianness),
+176                     &(paf_fmt.samplerate), &(paf_fmt.format), &(paf_fmt.channels), &(paf_fmt.source)) ;
+177             }
+178     else
+179             return SFE_PAF_NO_MARKER ;
+180 
+181     psf_log_printf (psf, "Version     : %d\n", paf_fmt.version) ;
+182 
+183     if (paf_fmt.version != 0)
+184     {       psf_log_printf (psf, "*** Bad version number. should be zero.\n") ;
+185             return SFE_PAF_VERSION ;
+186             } ;
+187 
+188     psf_log_printf (psf, "Sample Rate : %d\n", paf_fmt.samplerate) ;
+189     psf_log_printf (psf, "Channels    : %d\n", paf_fmt.channels) ;
+190 
+191     psf_log_printf (psf, "Endianness  : %d => ", paf_fmt.endianness) ;
+192     if (paf_fmt.endianness)
+193     {       psf_log_printf (psf, "Little\n", paf_fmt.endianness) ;
+194             psf->endian = SF_ENDIAN_LITTLE ;
+195             }
+196     else
+197     {       psf_log_printf (psf, "Big\n", paf_fmt.endianness) ;
+198             psf->endian = SF_ENDIAN_BIG ;
+199             } ;
+200 
+201     psf->datalength = psf->filelength - psf->dataoffset ;
+202 
+203     psf_binheader_readf (psf, "p", (int) psf->dataoffset) ;
+204 
+205     psf->sf.samplerate      = paf_fmt.samplerate ;
+206     psf->sf.channels        = paf_fmt.channels ;
+207 
+208     /* Only fill in type major. */
+209     psf->sf.format = SF_FORMAT_PAF ;
+210 
+211     psf_log_printf (psf, "Format      : %d => ", paf_fmt.format) ;
+212 
+213     /* PAF is by default big endian. */
+214     psf->sf.format |= paf_fmt.endianness ? SF_ENDIAN_LITTLE : SF_ENDIAN_BIG ;
+215 
+216     switch (paf_fmt.format)
+217     {       case PAF_PCM_S8 :
+218                                     psf_log_printf (psf, "8 bit linear PCM\n") ;
+219                                     psf->bytewidth = 1 ;
+220 
+221                                     psf->sf.format |= SF_FORMAT_PCM_S8 ;
+222 
+223                                     psf->blockwidth = psf->bytewidth * psf->sf.channels ;
+224                                     psf->sf.frames = psf->datalength / psf->blockwidth ;
+225                                     break ;
+226 
+227             case PAF_PCM_16 :
+228                                     psf_log_printf (psf, "16 bit linear PCM\n") ;
+229                                     psf->bytewidth = 2 ;
+230 
+231                                     psf->sf.format |= SF_FORMAT_PCM_16 ;
+232 
+233                                     psf->blockwidth = psf->bytewidth * psf->sf.channels ;
+234                                     psf->sf.frames = psf->datalength / psf->blockwidth ;
+235                                     break ;
+236 
+237             case PAF_PCM_24 :
+238                                     psf_log_printf (psf, "24 bit linear PCM\n") ;
+239                                     psf->bytewidth = 3 ;
+240 
+241                                     psf->sf.format |= SF_FORMAT_PCM_24 ;
+242 
+243                                     psf->blockwidth = 0 ;
+244                                     psf->sf.frames = PAF24_SAMPLES_PER_BLOCK * psf->datalength /
+245                                                                                     (PAF24_BLOCK_SIZE * psf->sf.channels) ;
+246                                     break ;
+247 
+248             default :       psf_log_printf (psf, "Unknown\n") ;
+249                                     return SFE_PAF_UNKNOWN_FORMAT ;
+250                                     break ;
+251             } ;
+252 
+253     psf_log_printf (psf, "Source      : %d => ", paf_fmt.source) ;
+254 
+255     switch (paf_fmt.source)
+256     {       case 1 : psf_log_printf (psf, "Analog Recording\n") ;
+257                                     break ;
+258             case 2 : psf_log_printf (psf, "Digital Transfer\n") ;
+259                                     break ;
+260             case 3 : psf_log_printf (psf, "Multi-track Mixdown\n") ;
+261                                     break ;
+262             case 5 : psf_log_printf (psf, "Audio Resulting From DSP Processing\n") ;
+263                                     break ;
+264             default : psf_log_printf (psf, "Unknown\n") ;
+265                                     break ;
+266             } ;
+267 
+268     return 0 ;
+269 } /* paf_read_header */
