@@ -1,0 +1,42 @@
+Vulnerability Type: buffer overflow
+Crash/Trigger Point(s): line 346 in wavlike.c
+Bug Call Trace:
+
+#1  0x0000000000545e4c in wavlike_read_fmt_chunk (psf=0x625000000100, 
+    fmtsize=<optimized out>) at src/wavlike.c:346
+#2  0x00000000005517ed in wav_read_header (psf=<optimized out>, 
+    blockalign=<optimized out>, framesperblock=<optimized out>)
+    at src/wav.c:381
+#3  0x000000000054f7e3 in wav_open (psf=<optimized out>)
+    at src/wav.c:171
+#4  0x00000000004cc9db in psf_open_file (psf=0x625000000100, 
+    sfinfo=0x7ffff313a270) at src/sndfile.c:3153
+#5  0x00000000004cdd5d in sf_open_virtual (sfvirtual=0x7ffff313a220, 
+    mode=16, sfinfo=0x7ffff313a270, user_data=<optimized out>)
+    at src/sndfile.c:517
+#6  0x00000000004ca83d in LLVMFuzzerTestOneInput (
+--Type <RET> for more, q to quit, c to continue without paging--
+    size=<optimized out>)
+    at ossfuzz/sndfile_fuzzer.cc:120
+#7  0x00000000006565c5 in main (argc=<optimized out>, 
+    argv=<optimized out>) at ossfuzz/standaloneengine.cc:50
+
+Patch:
+
+diff --git a/src/wavlike.c b/src/wavlike.c
+index b59c684..bbfab02 100644
+--- a/src/wavlike.c
++++ b/src/wavlike.c
+@@ -335,8 +335,15 @@ wavlike_read_fmt_chunk (SF_PRIVATE *psf, int fmtsize)
+ 					/* Terminate the buffer we're going to append_snprintf into. */
+ 					buffer [0] = 0 ;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+ 					for (bit = k = 0 ; bit < ARRAY_LEN (channel_mask_bits) && k < psf->sf.channels ; bit++)
++#else
++					for (bit = k = 0 ; bit < ARRAY_LEN (channel_mask_bits) ; bit++)
++#endif
+ 					{
+ 						if (wav_fmt->ext.channelmask & (1 << bit))
+ 						{	if (k > psf->sf.channels)
+ 							{	psf_log_printf (psf, "*** More channel map bits than there are channels.\n") ;

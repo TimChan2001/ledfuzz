@@ -1,0 +1,38 @@
+Vulnerability Type: The flac_buffer_copy function in flac.c in libsndfile 1.0.28 allows remote attackers to cause a denial of service (buffer overflow and application crash) or possibly have unspecified other impact via a crafted audio file.
+Crash/Trigger Point(s): line 177-323 in flac.c
+Bug Call Trace:
+
+#1  0x000000000050946a in flac_buffer_copy (psf=0x625000002900) at src/flac.c:177-323
+#2  0x00000000005089b1 in sf_flac_write_callback (UNUSED_decoder=<optimized out>, frame=<optimized out>, buffer=0x623000000178, client_data=0x1029d00 <__afl_persistent_loop.first_pass>)
+    at src/flac.c:402
+#3  0x00007f166ea65be2 in ?? () from /lib/x86_64-linux-gnu/libFLAC.so.8
+#4  0x00007f166ea680c2 in FLAC__stream_decoder_process_single () from /lib/x86_64-linux-gnu/libFLAC.so.8
+#5  0x000000000050f34e in flac_read_loop (psf=0x625000002900, len=<optimized out>) at src/flac.c:955
+#6  0x0000000000505ec1 in flac_read_flac2f (psf=0x625000002900, ptr=0x603000000010, len=6) at src/flac.c:1026
+#7  0x00000000004db991 in sf_readf_float (sndfile=0x625000002900, ptr=0x603000000010, frames=1) at src/sndfile.c:2054
+#8  0x00000000004ca90f in LLVMFuzzerTestOneInput (data=<optimized out>, size=<optimized out>) at ossfuzz/sndfile_fuzzer.cc:140
+#9  0x00000000006565c5 in main (argc=<optimized out>, argv=<optimized out>) at ossfuzz/standaloneengine.cc:50
+
+Patch:
+
+
+diff --git a/src/flac.c b/src/flac.c
+index 64d0172..1c5503f 100644
+--- a/src/flac.c
++++ b/src/flac.c
+@@ -169,6 +169,7 @@ flac_buffer_copy (SF_PRIVATE *psf)
+ 	const int32_t* const *buffer = pflac->wbuffer ;
+ 	unsigned i = 0, j, offset, channels, len ;
+ 
++#ifdef MAGMA_ENABLE_FIXES
+ 	if (psf->sf.channels != (int) frame->header.channels)
+ 	{	psf_log_printf (psf, "Error: FLAC frame changed from %d to %d channels\n"
+ 									"Nothing to do but to error out.\n" ,
+@@ -176,6 +177,10 @@ flac_buffer_copy (SF_PRIVATE *psf)
+ 		psf->error = SFE_FLAC_CHANNEL_COUNT_CHANGED ;
+ 		return 0 ;
+ 		} ;
++#endif
+ 
+ 	/*
+ 	**	frame->header.blocksize is variable and we're using a constant blocksize
